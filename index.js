@@ -17,67 +17,31 @@ let db;
 
 // Function to connect to MongoDB
 async function connectToDatabase() {
-  console.log(uri);
   client = new MongoClient("mongodb://mutafransheska45_db_user:5rVMsR3IuUzDxesL@ac-qf5otbx-shard-00-00.trertll.mongodb.net:27017,ac-qf5otbx-shard-00-01.trertll.mongodb.net:27017,ac-qf5otbx-shard-00-02.trertll.mongodb.net:27017/?ssl=true&replicaSet=atlas-13vop3-shard-0&authSource=admin&appName=Venue-Flow"); 
   await client.connect();
   db = client.db("VenueFlow");
-}
-
-// Middleware for Basic Authentication
-async function basicAuth(req, res, next) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Basic ")) {
-    return res.status(401)
-    .json({ message: "Missing or invalid Authorization header" });
-  }
-
-  // Split the credentials into user/password using Firebase
-//   const base64Credentials = authHeader.split(" ")[1];
-//   const credentials = base64.decode(base64Credentials).split(":");
-//   const email = credentials[0];
-//   const password = credentials[1];
-
-  // Read MongoDB
-  const collection = db.collection("users");
-  const user = await collection.findOne({ email });
-
-  // if user not found
-  if (!user) {
-    return res.status(401).json({ message: "User not found" });
-  }
-
-  // Decode and check the password using firebase
-//   const decodeStoredPassword = base64.decode(user.password);
-//   if (decodeStoredPassword !== password) {
-//     return res.status(401).json({ message: "Invalid password" });
-//   }
-  req.user = user;
-  next();
 }
 
 // Endpoint to handle user signup
 app.post("/signup", async (req, res) => {
   try{
     const user = req.body;
-  // validate user input
-  if(user.password.length < 8)
-    throw new Error("Password must be at least 8 characters long");
-  if(!user.email.includes("@"))
-    throw new Error("Invalid email format");
-  if(user.password !== user.confirmPassword)
-    throw new Error("Passwords do not match");
-  
-  // remove confirmPassword field before storing in database
-  delete user.confirmPassword;
-  
+  if(!user.uid)
+    throw new Error("Missing Firebase UID");
+  if(!user.username)
+    throw new Error("Username is missing");
+  if(!user.email)
+    throw new Error("Email is missing");
+
+  const collection = db.collection("users");
+  const existingUser= await collection.findOne({uid: user.uid});
+  if(existingUser){
+    return res.status(400).json({message: "User already exists"});
+  }
+
   // Every users starts as a normal user
   user.role = "user";
 
-  // encode password before storing, it means hiding the password before stroing it
-//   user.password = base64.encode(user.password);
-
-  // add user to database
-  const collection = db.collection("users");
   const result = await collection.insertOne({
     ...user, createdAt: new Date()
   });
@@ -93,54 +57,75 @@ app.post("/signup", async (req, res) => {
 }
 });
 
-app.use(basicAuth);
+const admin = require("./firebaseAdmin");
+async function verifyFirebase(req, res, next) {
+    const header = req.headers.authorization;
+    if (!header) {
+        return res.status(401).json({
+            message: "No token"
+        });
+    }
+    const token = header.split(" ")[1];
+    try {
+        const decoded =await admin.auth().verifyIdToken(token);
+        req.uid = decoded.uid;
+        next();
+    }
+    catch {
+        return res.status(401).json({
+            message: "Invalid token"
+        });
+    }
+}
 
-app.post("/login", async (req, res) => {
-    res.json({
-        id: req.user._id,
-        name: req.user.name,
-        email: req.user.email,
-        role: req.user.role
+app.get("/users/:uid", async (req, res) => {
+    const collection = db.collection("users");
+    const user = await collection.findOne({
+        uid: req.params.uid
     });
+    if (!user) {
+        return res.status(404).json({
+            message: "User not found"
+        });
+
+    }
+    res.json(user);
 });
+
+app.use(verifyFirebase);
 
 // tHis is so that the superAdmin can see all users but their password is removed for safety
 app.get("/users", async (req, res) => {
-    if (req.user.role !== "superAdmin") {
-        return res.status(403).json({
-            message: "Access Denied"
-        });
-    }
-    const collection = db.collection("users");
-    const users = await collection.find(
-        {},
-        {
-            projection: {
-                password: 0
-            }
-        }
-    ).toArray();
+  const collection = db.collection("users");
+const currentUser = await collection.findOne({
+    uid: req.uid
+});
+if(currentUser.role !== "superAdmin"){
+    return res.status(403).json({
+        message:"Access denied"
+    });
+}
+const users = await collection.find({}).toArray();
     res.json(users);
 });
 
 // so that the superadmin can promote users
 app.put("/users/:id/promote",async (req, res) => {
-
-   console.log("Promote is workingggggg");
-
-    if (req.user.role !== "superAdmin") {
-        return res.status(403).json({
-            message: "Access Denied"
-        });
-    }
-    const { id } = req.params;
+const collection = db.collection("users");
+const currentUser = await collection.findOne({
+    uid: req.uid
+});
+if (!currentUser || currentUser.role !== "superAdmin") {
+    return res.status(403).json({
+     message: "Access Denied"
+    });
+} const { id } = req.params;
     // to make sure the id is valid
     if (!ObjectId.isValid(id)) {
         return res.status(400).json({
             message: "Invalid user ID"
         });
     }
-    const collection = db.collection("users");
     const result = await collection.updateOne(
         { _id: new ObjectId(id) },
         { $set: {
@@ -365,7 +350,7 @@ app.post("/payments", async (req, res) => {
         res.status(400).json({
             message: error.message
         });
-    }p
+    }
 });
 
 app.listen(PORT, async () => {
