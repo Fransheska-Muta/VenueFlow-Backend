@@ -227,7 +227,7 @@ app.delete("/events/:id", async (req, res) => {
 });
 
 // endpoint to get venues
-app.get("/venues", async (req, res) => {
+app.get("/venues", verifyFirebase, async (req, res) => {
     try {
         const collection = db.collection("venues");
         const venues = await collection.find({}).toArray();
@@ -260,48 +260,64 @@ app.post("/venues", verifyFirebase, async (req, res) => {
 });
 
 // endpoint to update venues
-app.put("/venues/:id", async (req, res) => {
+app.put("/venues/:id", verifyFirebase, async (req, res) => {
     try {
-        const { id } = req.params;
-        const venue = req.body;
+        const { ObjectId } = require("mongodb");
+        const venueId = req.params.id;
+        const updatedVenue = req.body;
         const collection = db.collection("venues");
         const result = await collection.updateOne(
-            { _id: new ObjectId(id) },
-            { $set: { ...venue, updatedAt: new Date() } }
+            {
+                _id: new ObjectId(venueId)
+            },
+            {
+                $set: {
+                    name: updatedVenue.name,
+                    description: updatedVenue.description,
+                    address: updatedVenue.address,
+                    capacity: updatedVenue.capacity,
+                    rows: updatedVenue.rows,
+                    seatsPerRow: updatedVenue.seatsPerRow
+                }
+            }
         );
         if (result.matchedCount === 0) {
             return res.status(404).json({
                 message: "Venue not found"
             });
         }
-        res.json({
+        res.status(200).json({
             message: "Venue updated successfully"
         });
     } catch (error) {
         console.error(error);
-        res.status(400).json({
+
+        res.status(500).json({
             message: error.message
         });
     }
 });
 
 // endpoint to delete venues
-app.delete("/venues/:id", async (req, res) => {
+app.delete("/venues/:id", verifyFirebase, async (req, res) => {
     try {
-        const { id } = req.params;
+        const { ObjectId } = require("mongodb");
+        const venueId = req.params.id;
         const collection = db.collection("venues");
-        const result = await collection.deleteOne({ _id: new ObjectId(id) });
+        const result = await collection.deleteOne({
+            _id: new ObjectId(venueId)
+        });
         if (result.deletedCount === 0) {
             return res.status(404).json({
                 message: "Venue not found"
             });
         }
-        res.json({
+        res.status(200).json({
             message: "Venue deleted successfully"
         });
     } catch (error) {
         console.error(error);
-        res.status(400).json({
+        res.status(500).json({
             message: error.message
         });
     }
