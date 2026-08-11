@@ -57,8 +57,9 @@ app.post("/signup", async (req, res) => {
 }
 });
 
-const admin = require("./firebaseAdmin");
+const auth = require("./firebaseAdmin")
 async function verifyFirebase(req, res, next) {
+    // console.log("verifyFirebase was called");
     const header = req.headers.authorization;
     if (!header) {
         return res.status(401).json({
@@ -67,15 +68,17 @@ async function verifyFirebase(req, res, next) {
     }
     const token = header.split(" ")[1];
     try {
-        const decoded =await admin.auth().verifyIdToken(token);
+        const decoded =await auth.verifyIdToken(token);
         req.uid = decoded.uid;
         next();
     }
-    catch {
-        return res.status(401).json({
-            message: "Invalid token"
-        });
-    }
+catch (error) {
+    console.error("Firebase token verification error:", error);
+
+    return res.status(401).json({
+        message: "Invalid token"
+    });
+}
 }
 
 app.get("/users/:uid", async (req, res) => {
@@ -238,7 +241,8 @@ app.get("/venues", async (req, res) => {
 }); 
 
 // endpoint to post venues
-app.post("/venues", async (req, res) => {
+app.post("/venues", verifyFirebase, async (req, res) => {
+     console.log("VENUES ENDPOINT WAS HIT");
     try {
         const venue = req.body;
         const collection = db.collection("venues");
