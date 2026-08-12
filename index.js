@@ -428,6 +428,42 @@ app.get("/bookings", async (req, res) => {
     }
 });
 
+
+app.post('/api/book-seat', async (req, res) => {
+  const { eventId, seatId, userId } = req.body;
+
+  //  Look up if this seat has already been saved in Firebase
+  const seatRef = db.collection('events').doc(eventId).collection('bookings').doc(seatId);
+  const seatSnapshot = await seatRef.get();
+
+ 
+  if (seatSnapshot.exists) {
+    const seatData = seatSnapshot.data();
+
+    if (seatData.status === 'booked') {
+      // If Customer B hits this, we stop them immediately and send an error message
+      return res.status(409).json({ 
+        success: false, 
+        message: "Too late! This seat is already booked by someone else." 
+      });
+    }
+  }
+
+  //  If it's not booked, save it for this user!
+  await seatRef.set({
+    status: 'booked',
+    bookedBy: userId,
+    bookedAt: new Date()
+  });
+
+  return res.status(200).json({ 
+    success: true, 
+    message: "Seat successfully booked!" 
+  });
+});
+
+
+
 // endpoint to post payments
 app.post("/payments", async (req, res) => {
     try {
