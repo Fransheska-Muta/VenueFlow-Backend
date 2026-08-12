@@ -92,7 +92,6 @@ app.get("/users/:uid", async (req, res) => {
     res.json(user);
 });
 
-app.use(verifyFirebase);
 
 // tHis is so that the superAdmin can see all users but their password is removed for safety
 app.get("/users", async (req, res) => {
@@ -144,11 +143,14 @@ if (!currentUser || currentUser.role !== "superAdmin") {
 });
 
 // endpoint to post events
-app.post("/events", async (req, res) => {
+app.post("/events", verifyFirebase, async (req, res) => {
     try {
         const event = req.body;
         const collection = db.collection("events");
-        const result = await collection.insertOne({...event, createdAt: new Date()});
+        const result = await collection.insertOne({
+            ...event,
+            createdAt: new Date()
+        });
         res.status(201).json({
             message: "Event created successfully",
             eventId: result.insertedId
@@ -165,11 +167,11 @@ app.post("/events", async (req, res) => {
 app.get("/events", async (req, res) => {
     try {
         const collection = db.collection("events");
-        const events = await collection.find({}).toArray();
-        res.json(events);
+        const events = await collection.find().toArray();
+        res.status(200).json(events);
     } catch (error) {
         console.error(error);
-        res.status(400).json({
+        res.status(500).json({
             message: error.message
         });
     }
@@ -202,23 +204,23 @@ app.put("/events/:id", async (req, res) => {
 });
 
 // endpoint to delete events
-app.delete("/events/:id", async (req, res) => {
+router.delete("/:id", verifyFirebase, async (req, res) => {
     try {
         const { id } = req.params;
         const collection = db.collection("events");
-        const result = await collection.deleteOne({ _id: new ObjectId(id) });      
+        const result = await collection.deleteOne({_id: new ObjectId(id)});
         if (result.deletedCount === 0) {
-            return res.status(404).json({
-                message: "Event not found"
-            });
+          return res.status(404).json({
+            message: "Event not found"
+          });
         }
-        res.json({
-            message: "Event deleted successfully"
+        res.status(200).json({
+          message: "Event deleted successfully"
         });
     } catch (error) {
         console.error(error);
         res.status(400).json({
-            message: error.message
+          message: error.message
         });
     }
 });
