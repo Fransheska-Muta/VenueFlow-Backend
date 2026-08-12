@@ -57,8 +57,9 @@ app.post("/signup", async (req, res) => {
 }
 });
 
-const admin = require("./firebaseAdmin");
+const auth = require("./firebaseAdmin")
 async function verifyFirebase(req, res, next) {
+    // console.log("verifyFirebase was called");
     const header = req.headers.authorization;
     if (!header) {
         return res.status(401).json({
@@ -67,15 +68,17 @@ async function verifyFirebase(req, res, next) {
     }
     const token = header.split(" ")[1];
     try {
-        const decoded =await admin.auth().verifyIdToken(token);
+        const decoded =await auth.verifyIdToken(token);
         req.uid = decoded.uid;
         next();
     }
-    catch {
-        return res.status(401).json({
-            message: "Invalid token"
-        });
-    }
+catch (error) {
+    console.error("Firebase token verification error:", error);
+
+    return res.status(401).json({
+        message: "Invalid token"
+    });
+}
 }
 
 app.get("/users/:uid", async (req, res) => {
@@ -224,7 +227,7 @@ app.delete("/events/:id", async (req, res) => {
 });
 
 // endpoint to get venues
-app.get("/venues", async (req, res) => {
+app.get("/venues", verifyFirebase, async (req, res) => {
     try {
         const collection = db.collection("venues");
         const venues = await collection.find({}).toArray();
@@ -238,7 +241,8 @@ app.get("/venues", async (req, res) => {
 }); 
 
 // endpoint to post venues
-app.post("/venues", async (req, res) => {
+app.post("/venues", verifyFirebase, async (req, res) => {
+     console.log("VENUES ENDPOINT WAS HIT");
     try {
         const venue = req.body;
         const collection = db.collection("venues");
@@ -256,72 +260,164 @@ app.post("/venues", async (req, res) => {
 });
 
 // endpoint to update venues
-app.put("/venues/:id", async (req, res) => {
+app.put("/venues/:id", verifyFirebase, async (req, res) => {
     try {
-        const { id } = req.params;
-        const venue = req.body;
+        const { ObjectId } = require("mongodb");
+        const venueId = req.params.id;
+        const updatedVenue = req.body;
         const collection = db.collection("venues");
         const result = await collection.updateOne(
-            { _id: new ObjectId(id) },
-            { $set: { ...venue, updatedAt: new Date() } }
+            {
+                _id: new ObjectId(venueId)
+            },
+            {
+                $set: {
+                    name: updatedVenue.name,
+                    description: updatedVenue.description,
+                    address: updatedVenue.address,
+                    capacity: updatedVenue.capacity,
+                    rows: updatedVenue.rows,
+                    seatsPerRow: updatedVenue.seatsPerRow
+                }
+            }
         );
         if (result.matchedCount === 0) {
             return res.status(404).json({
                 message: "Venue not found"
             });
         }
-        res.json({
+        res.status(200).json({
             message: "Venue updated successfully"
         });
     } catch (error) {
         console.error(error);
-        res.status(400).json({
+
+        res.status(500).json({
             message: error.message
         });
     }
 });
 
 // endpoint to delete venues
-app.delete("/venues/:id", async (req, res) => {
+app.delete("/venues/:id", verifyFirebase, async (req, res) => {
     try {
-        const { id } = req.params;
+        const { ObjectId } = require("mongodb");
+        const venueId = req.params.id;
         const collection = db.collection("venues");
-        const result = await collection.deleteOne({ _id: new ObjectId(id) });
+        const result = await collection.deleteOne({
+            _id: new ObjectId(venueId)
+        });
         if (result.deletedCount === 0) {
             return res.status(404).json({
                 message: "Venue not found"
             });
         }
-        res.json({
+        res.status(200).json({
             message: "Venue deleted successfully"
         });
     } catch (error) {
         console.error(error);
-        res.status(400).json({
+        res.status(500).json({
             message: error.message
         });
     }
 });
 
 // endpoint to post bookings
-app.post("/bookings", async (req, res) => {
-    try {
-        const booking = req.body;
-        const collection = db.collection("bookings");
-        const result = await collection.insertOne({...booking, createdAt: new Date()});
-        res.status(201).json({
-            message: "Booking created successfully",
-            bookingId: result.insertedId
+// app.post("/bookings", async (req, res) => {
+//     try {
+//         const booking = req.body;
+//         const collection = db.collection("bookings");
+//         const result = await collection.insertOne({...booking, createdAt: new Date()});
+//         res.status(201).json({
+//             message: "Booking created successfully",
+//             bookingId: result.insertedId
+//         });
+//     } catch (error) {
+//         console.error(error);
+//         res.status(400).json({
+//             message: error.message
+//         });
+//     }
+// });
+
+// endpoint to post bookings (David's implementation)
+
+app.get("/bookings", async (req, res) => {
+    try{
+        const {eventId, vanueId, selectedSeats } = req.body;
+        const userId = req.user._id;
+
+        if(!eventId || !venueId || !selectedSeats || !Array.isArray(selectedSeats) || selectedSeats.length === 0){
+            return res.status(400).json({message: "Missing or malformed payload fields."});
+        }
+        if (!ObjectId.isValid(eventId) || !ObjectId.isValid(venueId)) {
+            return res.status(400).json({message: "Invalid eventId or venueId."});
+        }
+        const seatCollection = db.collection("seats");
+        const bookingCollection = db.collection("bookings");
+
+        const seatObjectIds = selectedSeats.map(id=>{
+            if(!ObjectId.isValid(id)){
+                throw new Error(`Invalid seat ID: ${id}`);
+            }
+            return new ObjectId(id);
         });
-    } catch (error) {
+
+        const dbSeats =await seatCollextion.find({
+            _id: {$in: seatObjectIds},
+            eventId: new ObjectId(eventId),
+        }).toArray();
+
+        if(dbSeats.length !== selectedSeats.length){
+            return res.status(400).json({message: "Some selected seats do not exist for the given event."});
+        }
+
+        const isAnySeatTaken = dbSeats.some(seat =>seat.status !== "available");
+        if(isAnySeatTaken){
+            return res.status(400).json({message: "One or more selected seats are already booked."});
+        }
+
+        let calculatedTotal = 0;
+        dbSeats.forEach(seat=>{
+            calculatedTotal += seat.price;
+        });
+
+        const bookingReference = `VenueFlow-${Math.random().toString(36).substr(2, 9)}.toUpperCase()`;
+
+        const newBooking = {
+            customer_id: new ObjectId(userId),
+            event_id: new ObjectId(eventId),
+            venue_id: new ObjectId(venueId),
+            selectedSeats: seatObjectIds,
+            totalPrice: calculatedTotal,
+            bookingReference: bookingReference,
+            bookingStatus: "confirmed",
+            createdAt: new Date(),
+        };
+
+        const result = await bookingCollection.insertOne(newBooking);
+        await seatCollection.updateMany(
+            {_id: {$in: seatObjectIds}},
+            {$set: {status: "booked", updatedByBooking: result.insertedId}}
+        );
+        return res.status(201).json({
+            message: "Booking created successfully",
+            bookingId: result.insertedId,
+            totalPrice: calculatedTotal,
+            bookingReference: bookingReference,
+            bookingStatus: newBooking.bookingStatus
+        });
+    } catch (error){
         console.error(error);
-        res.status(400).json({
+        return res.status(400).json({
             message: error.message
         });
     }
 });
 
 // endpoint to get bookings history
+
 app.get("/bookings", async (req, res) => {
     try {
         const collection = db.collection("bookings");
@@ -334,6 +430,42 @@ app.get("/bookings", async (req, res) => {
         });
     }
 });
+
+
+app.post('/api/book-seat', async (req, res) => {
+  const { eventId, seatId, userId } = req.body;
+
+  //  Look up if this seat has already been saved in Firebase
+  const seatRef = db.collection('events').doc(eventId).collection('bookings').doc(seatId);
+  const seatSnapshot = await seatRef.get();
+
+ 
+  if (seatSnapshot.exists) {
+    const seatData = seatSnapshot.data();
+
+    if (seatData.status === 'booked') {
+      // If Customer B hits this, we stop them immediately and send an error message
+      return res.status(409).json({ 
+        success: false, 
+        message: "Too late! This seat is already booked by someone else." 
+      });
+    }
+  }
+
+  //  If it's not booked, save it for this user!
+  await seatRef.set({
+    status: 'booked',
+    bookedBy: userId,
+    bookedAt: new Date()
+  });
+
+  return res.status(200).json({ 
+    success: true, 
+    message: "Seat successfully booked!" 
+  });
+});
+
+
 
 // endpoint to post payments
 app.post("/payments", async (req, res) => {
