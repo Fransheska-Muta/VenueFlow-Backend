@@ -324,24 +324,100 @@ app.delete("/venues/:id", verifyFirebase, async (req, res) => {
 });
 
 // endpoint to post bookings
-app.post("/bookings", async (req, res) => {
-    try {
-        const booking = req.body;
-        const collection = db.collection("bookings");
-        const result = await collection.insertOne({...booking, createdAt: new Date()});
-        res.status(201).json({
-            message: "Booking created successfully",
-            bookingId: result.insertedId
+// app.post("/bookings", async (req, res) => {
+//     try {
+//         const booking = req.body;
+//         const collection = db.collection("bookings");
+//         const result = await collection.insertOne({...booking, createdAt: new Date()});
+//         res.status(201).json({
+//             message: "Booking created successfully",
+//             bookingId: result.insertedId
+//         });
+//     } catch (error) {
+//         console.error(error);
+//         res.status(400).json({
+//             message: error.message
+//         });
+//     }
+// });
+
+// endpoint to post bookings (David's implementation)
+
+app.get("/bookings", async (req, res) => {
+    try{
+        const {eventId, vanueId, selectedSeats } = req.body;
+        const userId = req.user._id;
+
+        if(!eventId || !venueId || !selectedSeats || !Array.isArray(selectedSeats) || selectedSeats.length === 0){
+            return res.status(400).json({message: "Missing or malformed payload fields."});
+        }
+        if (!ObjectId.isValid(eventId) || !ObjectId.isValid(venueId)) {
+            return res.status(400).json({message: "Invalid eventId or venueId."});
+        }
+        const seatCollection = db.collection("seats");
+        const bookingCollection = db.collection("bookings");
+
+        const seatObjectIds = selectedSeats.map(id=>{
+            if(!ObjectId.isValid(id)){
+                throw new Error(`Invalid seat ID: ${id}`);
+            }
+            return new ObjectId(id);
         });
-    } catch (error) {
+
+        const dbSeats =await seatCollextion.find({
+            _id: {$in: seatObjectIds},
+            eventId: new ObjectId(eventId),
+        }).toArray();
+
+        if(dbSeats.length !== selectedSeats.length){
+            return res.status(400).json({message: "Some selected seats do not exist for the given event."});
+        }
+
+        const isAnySeatTaken = dbSeats.some(seat =>seat.status !== "available");
+        if(isAnySeatTaken){
+            return res.status(400).json({message: "One or more selected seats are already booked."});
+        }
+
+        let calculatedTotal = 0;
+        dbSeats.forEach(seat=>{
+            calculatedTotal += seat.price;
+        });
+
+        const bookingReference = `VenueFlow-${Math.random().toString(36).substr(2, 9)}.toUpperCase()`;
+
+        const newBooking = {
+            customer_id: new ObjectId(userId),
+            event_id: new ObjectId(eventId),
+            venue_id: new ObjectId(venueId),
+            selectedSeats: seatObjectIds,
+            totalPrice: calculatedTotal,
+            bookingReference: bookingReference,
+            bookingStatus: "confirmed",
+            createdAt: new Date(),
+        };
+
+        const result = await bookingCollection.insertOne(newBooking);
+        await seatCollection.updateMany(
+            {_id: {$in: seatObjectIds}},
+            {$set: {status: "booked", updatedByBooking: result.insertedId}}
+        );
+        return res.status(201).json({
+            message: "Booking created successfully",
+            bookingId: result.insertedId,
+            totalPrice: calculatedTotal,
+            bookingReference: bookingReference,
+            bookingStatus: newBooking.bookingStatus
+        });
+    } catch (error){
         console.error(error);
-        res.status(400).json({
+        return res.status(400).json({
             message: error.message
         });
     }
 });
 
 // endpoint to get bookings history
+
 app.get("/bookings", async (req, res) => {
     try {
         const collection = db.collection("bookings");
