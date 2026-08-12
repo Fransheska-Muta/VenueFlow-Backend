@@ -41,7 +41,6 @@ app.post("/signup", async (req, res) => {
 
   // Every users starts as a normal user
   user.role = "user";
-
   const result = await collection.insertOne({
     ...user, createdAt: new Date()
   });
@@ -73,8 +72,7 @@ async function verifyFirebase(req, res, next) {
         next();
     }
 catch (error) {
-    console.error("Firebase token verification error:", error);
-
+    // console.error("Firebase token verification error:", error);
     return res.status(401).json({
         message: "Invalid token"
     });
@@ -90,7 +88,6 @@ app.get("/users/:uid", async (req, res) => {
         return res.status(404).json({
             message: "User not found"
         });
-
     }
     res.json(user);
 });
