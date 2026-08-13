@@ -41,7 +41,6 @@ app.post("/signup", async (req, res) => {
 
   // Every users starts as a normal user
   user.role = "user";
-
   const result = await collection.insertOne({
     ...user, createdAt: new Date()
   });
@@ -73,8 +72,7 @@ async function verifyFirebase(req, res, next) {
         next();
     }
 catch (error) {
-    console.error("Firebase token verification error:", error);
-
+    // console.error("Firebase token verification error:", error);
     return res.status(401).json({
         message: "Invalid token"
     });
@@ -90,12 +88,10 @@ app.get("/users/:uid", async (req, res) => {
         return res.status(404).json({
             message: "User not found"
         });
-
     }
     res.json(user);
 });
 
-app.use(verifyFirebase);
 
 // tHis is so that the superAdmin can see all users but their password is removed for safety
 app.get("/users", async (req, res) => {
@@ -147,11 +143,14 @@ if (!currentUser || currentUser.role !== "superAdmin") {
 });
 
 // endpoint to post events
-app.post("/events", async (req, res) => {
+app.post("/events", verifyFirebase, async (req, res) => {
     try {
         const event = req.body;
         const collection = db.collection("events");
-        const result = await collection.insertOne({...event, createdAt: new Date()});
+        const result = await collection.insertOne({
+            ...event,
+            createdAt: new Date()
+        });
         res.status(201).json({
             message: "Event created successfully",
             eventId: result.insertedId
@@ -168,11 +167,11 @@ app.post("/events", async (req, res) => {
 app.get("/events", async (req, res) => {
     try {
         const collection = db.collection("events");
-        const events = await collection.find({}).toArray();
-        res.json(events);
+        const events = await collection.find().toArray();
+        res.status(200).json(events);
     } catch (error) {
         console.error(error);
-        res.status(400).json({
+        res.status(500).json({
             message: error.message
         });
     }
@@ -205,26 +204,26 @@ app.put("/events/:id", async (req, res) => {
 });
 
 // endpoint to delete events
-app.delete("/events/:id", async (req, res) => {
-    try {
-        const { id } = req.params;
-        const collection = db.collection("events");
-        const result = await collection.deleteOne({ _id: new ObjectId(id) });      
-        if (result.deletedCount === 0) {
-            return res.status(404).json({
-                message: "Event not found"
-            });
-        }
-        res.json({
-            message: "Event deleted successfully"
-        });
-    } catch (error) {
-        console.error(error);
-        res.status(400).json({
-            message: error.message
-        });
-    }
-});
+// router.delete("/:id", verifyFirebase, async (req, res) => {
+//     try {
+//         const { id } = req.params;
+//         const collection = db.collection("events");
+//         const result = await collection.deleteOne({_id: new ObjectId(id)});
+//         if (result.deletedCount === 0) {
+//           return res.status(404).json({
+//             message: "Event not found"
+//           });
+//         }
+//         res.status(200).json({
+//           message: "Event deleted successfully"
+//         });
+//     } catch (error) {
+//         console.error(error);
+//         res.status(400).json({
+//           message: error.message
+//         });
+//     }
+// });
 
 // endpoint to get venues
 app.get("/venues", verifyFirebase, async (req, res) => {
@@ -324,24 +323,100 @@ app.delete("/venues/:id", verifyFirebase, async (req, res) => {
 });
 
 // endpoint to post bookings
-app.post("/bookings", async (req, res) => {
-    try {
-        const booking = req.body;
-        const collection = db.collection("bookings");
-        const result = await collection.insertOne({...booking, createdAt: new Date()});
-        res.status(201).json({
-            message: "Booking created successfully",
-            bookingId: result.insertedId
+// app.post("/bookings", async (req, res) => {
+//     try {
+//         const booking = req.body;
+//         const collection = db.collection("bookings");
+//         const result = await collection.insertOne({...booking, createdAt: new Date()});
+//         res.status(201).json({
+//             message: "Booking created successfully",
+//             bookingId: result.insertedId
+//         });
+//     } catch (error) {
+//         console.error(error);
+//         res.status(400).json({
+//             message: error.message
+//         });
+//     }
+// });
+
+// endpoint to post bookings (David's implementation)
+
+app.get("/bookings", async (req, res) => {
+    try{
+        const {eventId, vanueId, selectedSeats } = req.body;
+        const userId = req.user._id;
+
+        if(!eventId || !venueId || !selectedSeats || !Array.isArray(selectedSeats) || selectedSeats.length === 0){
+            return res.status(400).json({message: "Missing or malformed payload fields."});
+        }
+        if (!ObjectId.isValid(eventId) || !ObjectId.isValid(venueId)) {
+            return res.status(400).json({message: "Invalid eventId or venueId."});
+        }
+        const seatCollection = db.collection("seats");
+        const bookingCollection = db.collection("bookings");
+
+        const seatObjectIds = selectedSeats.map(id=>{
+            if(!ObjectId.isValid(id)){
+                throw new Error(`Invalid seat ID: ${id}`);
+            }
+            return new ObjectId(id);
         });
-    } catch (error) {
+
+        const dbSeats =await seatCollextion.find({
+            _id: {$in: seatObjectIds},
+            eventId: new ObjectId(eventId),
+        }).toArray();
+
+        if(dbSeats.length !== selectedSeats.length){
+            return res.status(400).json({message: "Some selected seats do not exist for the given event."});
+        }
+
+        const isAnySeatTaken = dbSeats.some(seat =>seat.status !== "available");
+        if(isAnySeatTaken){
+            return res.status(400).json({message: "One or more selected seats are already booked."});
+        }
+
+        let calculatedTotal = 0;
+        dbSeats.forEach(seat=>{
+            calculatedTotal += seat.price;
+        });
+
+        const bookingReference = `VenueFlow-${Math.random().toString(36).substr(2, 9)}.toUpperCase()`;
+
+        const newBooking = {
+            customer_id: new ObjectId(userId),
+            event_id: new ObjectId(eventId),
+            venue_id: new ObjectId(venueId),
+            selectedSeats: seatObjectIds,
+            totalPrice: calculatedTotal,
+            bookingReference: bookingReference,
+            bookingStatus: "confirmed",
+            createdAt: new Date(),
+        };
+
+        const result = await bookingCollection.insertOne(newBooking);
+        await seatCollection.updateMany(
+            {_id: {$in: seatObjectIds}},
+            {$set: {status: "booked", updatedByBooking: result.insertedId}}
+        );
+        return res.status(201).json({
+            message: "Booking created successfully",
+            bookingId: result.insertedId,
+            totalPrice: calculatedTotal,
+            bookingReference: bookingReference,
+            bookingStatus: newBooking.bookingStatus
+        });
+    } catch (error){
         console.error(error);
-        res.status(400).json({
+        return res.status(400).json({
             message: error.message
         });
     }
 });
 
 // endpoint to get bookings history
+
 app.get("/bookings", async (req, res) => {
     try {
         const collection = db.collection("bookings");
@@ -354,6 +429,42 @@ app.get("/bookings", async (req, res) => {
         });
     }
 });
+
+
+app.post('/api/book-seat', async (req, res) => {
+  const { eventId, seatId, userId } = req.body;
+
+  //  Look up if this seat has already been saved in Firebase
+  const seatRef = db.collection('events').doc(eventId).collection('bookings').doc(seatId);
+  const seatSnapshot = await seatRef.get();
+
+ 
+  if (seatSnapshot.exists) {
+    const seatData = seatSnapshot.data();
+
+    if (seatData.status === 'booked') {
+      // If Customer B hits this, we stop them immediately and send an error message
+      return res.status(409).json({ 
+        success: false, 
+        message: "Too late! This seat is already booked by someone else." 
+      });
+    }
+  }
+
+  //  If it's not booked, save it for this user!
+  await seatRef.set({
+    status: 'booked',
+    bookedBy: userId,
+    bookedAt: new Date()
+  });
+
+  return res.status(200).json({ 
+    success: true, 
+    message: "Seat successfully booked!" 
+  });
+});
+
+
 
 // endpoint to post payments
 app.post("/payments", async (req, res) => {
