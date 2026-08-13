@@ -10,50 +10,50 @@ app.use(express.json());
 
 // MongoDB connection setup  
 const uri = process.env.MONGODB_URI;
-const { MongoClient, ObjectId} = require("mongodb");
+const { MongoClient, ObjectId } = require("mongodb");
 // const base64 = require("base-64"); Here is where we use firebase
 let client;
 let db;
 
 // Function to connect to MongoDB
 async function connectToDatabase() {
-  client = new MongoClient("mongodb://mutafransheska45_db_user:5rVMsR3IuUzDxesL@ac-qf5otbx-shard-00-00.trertll.mongodb.net:27017,ac-qf5otbx-shard-00-01.trertll.mongodb.net:27017,ac-qf5otbx-shard-00-02.trertll.mongodb.net:27017/?ssl=true&replicaSet=atlas-13vop3-shard-0&authSource=admin&appName=Venue-Flow"); 
-  await client.connect();
-  db = client.db("VenueFlow");
+    client = new MongoClient("mongodb://mutafransheska45_db_user:5rVMsR3IuUzDxesL@ac-qf5otbx-shard-00-00.trertll.mongodb.net:27017,ac-qf5otbx-shard-00-01.trertll.mongodb.net:27017,ac-qf5otbx-shard-00-02.trertll.mongodb.net:27017/?ssl=true&replicaSet=atlas-13vop3-shard-0&authSource=admin&appName=Venue-Flow");
+    await client.connect();
+    db = client.db("VenueFlow");
 }
 
 // Endpoint to handle user signup
 app.post("/signup", async (req, res) => {
-  try{
-    const user = req.body;
-  if(!user.uid)
-    throw new Error("Missing Firebase UID");
-  if(!user.username)
-    throw new Error("Username is missing");
-  if(!user.email)
-    throw new Error("Email is missing");
+    try {
+        const user = req.body;
+        if (!user.uid)
+            throw new Error("Missing Firebase UID");
+        if (!user.username)
+            throw new Error("Username is missing");
+        if (!user.email)
+            throw new Error("Email is missing");
 
-  const collection = db.collection("users");
-  const existingUser= await collection.findOne({uid: user.uid});
-  if(existingUser){
-    return res.status(400).json({message: "User already exists"});
-  }
+        const collection = db.collection("users");
+        const existingUser = await collection.findOne({ uid: user.uid });
+        if (existingUser) {
+            return res.status(400).json({ message: "User already exists" });
+        }
 
-  // Every users starts as a normal user
-  user.role = "user";
-  const result = await collection.insertOne({
-    ...user, createdAt: new Date()
-  });
-  res.status(201).json({
-    message: "Account created successfully",
-    userId: result.insertedId,
-  });
-}catch(error) {
-    console.error(error);
-    res.status(400).json({
-    message: error.message
-  });
-}
+        // Every users starts as a normal user
+        user.role = "user";
+        const result = await collection.insertOne({
+            ...user, createdAt: new Date()
+        });
+        res.status(201).json({
+            message: "Account created successfully",
+            userId: result.insertedId,
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(400).json({
+            message: error.message
+        });
+    }
 });
 
 const auth = require("./firebaseAdmin")
@@ -67,16 +67,16 @@ async function verifyFirebase(req, res, next) {
     }
     const token = header.split(" ")[1];
     try {
-        const decoded =await auth.verifyIdToken(token);
+        const decoded = await auth.verifyIdToken(token);
         req.uid = decoded.uid;
         next();
     }
-catch (error) {
-    // console.error("Firebase token verification error:", error);
-    return res.status(401).json({
-        message: "Invalid token"
-    });
-}
+    catch (error) {
+        // console.error("Firebase token verification error:", error);
+        return res.status(401).json({
+            message: "Invalid token"
+        });
+    }
 }
 
 app.get("/users/:uid", async (req, res) => {
@@ -95,30 +95,30 @@ app.get("/users/:uid", async (req, res) => {
 
 // tHis is so that the superAdmin can see all users but their password is removed for safety
 app.get("/users", async (req, res) => {
-  const collection = db.collection("users");
-const currentUser = await collection.findOne({
-    uid: req.uid
-});
-if(currentUser.role !== "superAdmin"){
-    return res.status(403).json({
-        message:"Access denied"
+    const collection = db.collection("users");
+    const currentUser = await collection.findOne({
+        uid: req.uid
     });
-}
-const users = await collection.find({}).toArray();
+    if (currentUser.role !== "superAdmin") {
+        return res.status(403).json({
+            message: "Access denied"
+        });
+    }
+    const users = await collection.find({}).toArray();
     res.json(users);
 });
 
 // so that the superadmin can promote users
-app.put("/users/:id/promote",async (req, res) => {
-const collection = db.collection("users");
-const currentUser = await collection.findOne({
-    uid: req.uid
-});
-if (!currentUser || currentUser.role !== "superAdmin") {
-    return res.status(403).json({
-     message: "Access Denied"
+app.put("/users/:id/promote", async (req, res) => {
+    const collection = db.collection("users");
+    const currentUser = await collection.findOne({
+        uid: req.uid
     });
-} const { id } = req.params;
+    if (!currentUser || currentUser.role !== "superAdmin") {
+        return res.status(403).json({
+            message: "Access Denied"
+        });
+    } const { id } = req.params;
     // to make sure the id is valid
     if (!ObjectId.isValid(id)) {
         return res.status(400).json({
@@ -127,11 +127,12 @@ if (!currentUser || currentUser.role !== "superAdmin") {
     }
     const result = await collection.updateOne(
         { _id: new ObjectId(id) },
-        { $set: {
-            role: "municipality"
+        {
+            $set: {
+                role: "municipality"
+            }
         }
-      }
-  );
+    );
     if (result.matchedCount === 0) {
         return res.status(404).json({
             message: "User not found"
@@ -237,15 +238,15 @@ app.get("/venues", verifyFirebase, async (req, res) => {
             message: error.message
         });
     }
-}); 
+});
 
 // endpoint to post venues
 app.post("/venues", verifyFirebase, async (req, res) => {
-     console.log("VENUES ENDPOINT WAS HIT");
+    console.log("VENUES ENDPOINT WAS HIT");
     try {
         const venue = req.body;
         const collection = db.collection("venues");
-        const result = await collection.insertOne({...venue, createdAt: new Date()});
+        const result = await collection.insertOne({ ...venue, createdAt: new Date() });
         res.status(201).json({
             message: "Venue created successfully",
             venueId: result.insertedId
@@ -343,42 +344,42 @@ app.delete("/venues/:id", verifyFirebase, async (req, res) => {
 // endpoint to post bookings (David's implementation)
 
 app.get("/bookings", async (req, res) => {
-    try{
-        const {eventId, vanueId, selectedSeats } = req.body;
+    try {
+        const { eventId, vanueId, selectedSeats } = req.body;
         const userId = req.user._id;
 
-        if(!eventId || !venueId || !selectedSeats || !Array.isArray(selectedSeats) || selectedSeats.length === 0){
-            return res.status(400).json({message: "Missing or malformed payload fields."});
+        if (!eventId || !venueId || !selectedSeats || !Array.isArray(selectedSeats) || selectedSeats.length === 0) {
+            return res.status(400).json({ message: "Missing or malformed payload fields." });
         }
         if (!ObjectId.isValid(eventId) || !ObjectId.isValid(venueId)) {
-            return res.status(400).json({message: "Invalid eventId or venueId."});
+            return res.status(400).json({ message: "Invalid eventId or venueId." });
         }
         const seatCollection = db.collection("seats");
         const bookingCollection = db.collection("bookings");
 
-        const seatObjectIds = selectedSeats.map(id=>{
-            if(!ObjectId.isValid(id)){
+        const seatObjectIds = selectedSeats.map(id => {
+            if (!ObjectId.isValid(id)) {
                 throw new Error(`Invalid seat ID: ${id}`);
             }
             return new ObjectId(id);
         });
 
-        const dbSeats =await seatCollextion.find({
-            _id: {$in: seatObjectIds},
+        const dbSeats = await seatCollextion.find({
+            _id: { $in: seatObjectIds },
             eventId: new ObjectId(eventId),
         }).toArray();
 
-        if(dbSeats.length !== selectedSeats.length){
-            return res.status(400).json({message: "Some selected seats do not exist for the given event."});
+        if (dbSeats.length !== selectedSeats.length) {
+            return res.status(400).json({ message: "Some selected seats do not exist for the given event." });
         }
 
-        const isAnySeatTaken = dbSeats.some(seat =>seat.status !== "available");
-        if(isAnySeatTaken){
-            return res.status(400).json({message: "One or more selected seats are already booked."});
+        const isAnySeatTaken = dbSeats.some(seat => seat.status !== "available");
+        if (isAnySeatTaken) {
+            return res.status(400).json({ message: "One or more selected seats are already booked." });
         }
 
         let calculatedTotal = 0;
-        dbSeats.forEach(seat=>{
+        dbSeats.forEach(seat => {
             calculatedTotal += seat.price;
         });
 
@@ -397,8 +398,8 @@ app.get("/bookings", async (req, res) => {
 
         const result = await bookingCollection.insertOne(newBooking);
         await seatCollection.updateMany(
-            {_id: {$in: seatObjectIds}},
-            {$set: {status: "booked", updatedByBooking: result.insertedId}}
+            { _id: { $in: seatObjectIds } },
+            { $set: { status: "booked", updatedByBooking: result.insertedId } }
         );
         return res.status(201).json({
             message: "Booking created successfully",
@@ -407,7 +408,7 @@ app.get("/bookings", async (req, res) => {
             bookingReference: bookingReference,
             bookingStatus: newBooking.bookingStatus
         });
-    } catch (error){
+    } catch (error) {
         console.error(error);
         return res.status(400).json({
             message: error.message
@@ -430,38 +431,168 @@ app.get("/bookings", async (req, res) => {
     }
 });
 
+// Create a booking
+app.post("/bookings", async (req, res) => {
+    try {
+        const {
+            venueId,
+            venueName,
+            userId,
+            date,
+            startTime,
+            endTime
+        } = req.body;
+
+        // Check required information
+        if (!venueId || !userId || !date || !startTime || !endTime) {
+            return res.status(400).json({
+                message: "Please provide venue, user, date, start time and end time"
+            });
+        }
+
+        // Make sure the ending time is after starting time
+        if (startTime >= endTime) {
+            return res.status(400).json({
+                message: "End time must be after start time"
+            });
+        }
+
+        const collection = db.collection("bookings");
+
+        // Check for an existing booking that overlaps
+        const existingBooking = await collection.findOne({
+            venueId: venueId,
+            date: date,
+            status: { $ne: "cancelled" },
+            startTime: { $lt: endTime },
+            endTime: { $gt: startTime }
+        });
+
+        // Stop double booking
+        if (existingBooking) {
+            return res.status(409).json({
+                message: "This venue is already booked for this time.",
+                bookingId: existingBooking._id
+            });
+        }
+
+        // Create the booking
+        const booking = {
+            venueId,
+            venueName,
+            userId,
+            date,
+            startTime,
+            endTime,
+            status: "confirmed",
+            createdAt: new Date()
+        };
+
+        const result = await collection.insertOne(booking);
+
+        res.status(201).json({
+            message: "Booking created successfully",
+            bookingId: result.insertedId
+        });
+
+    } catch (error) {
+        console.error(error);
+
+        res.status(500).json({
+            message: error.message
+        });
+    }
+});
+
+
+// Get all bookings
+app.get("/bookings", async (req, res) => {
+    try {
+        const collection = db.collection("bookings");
+
+        const bookings = await collection.find().toArray();
+
+        res.status(200).json(bookings);
+
+    } catch (error) {
+        console.error(error);
+
+        res.status(500).json({
+            message: error.message
+        });
+    }
+});
+
+
+// Cancel a booking
+app.put("/api/bookings/:id/cancel", async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { ObjectId } = require("mongodb");
+        const collection = db.collection("bookings");
+        const result = await collection.updateOne(
+            { _id: new ObjectId(id) },
+            {
+                $set: {
+                    status: "cancelled",
+                    cancelledAt: new Date()
+                }
+            }
+        );
+
+        if (result.matchedCount === 0) {
+            return res.status(404).json({
+                message: "Booking not found"
+            });
+        }
+
+        res.status(200).json({
+            message: "Booking cancelled successfully"
+        });
+
+    } catch (error) {
+        console.error(error);
+
+        res.status(500).json({
+            message: error.message
+        });
+    }
+});
+
+
+
 
 app.post('/api/book-seat', async (req, res) => {
-  const { eventId, seatId, userId } = req.body;
+    const { eventId, seatId, userId } = req.body;
 
-  //  Look up if this seat has already been saved in Firebase
-  const seatRef = db.collection('events').doc(eventId).collection('bookings').doc(seatId);
-  const seatSnapshot = await seatRef.get();
+    //  Look up if this seat has already been saved in Firebase
+    const seatRef = db.collection('events').doc(eventId).collection('bookings').doc(seatId);
+    const seatSnapshot = await seatRef.get();
 
- 
-  if (seatSnapshot.exists) {
-    const seatData = seatSnapshot.data();
 
-    if (seatData.status === 'booked') {
-      // If Customer B hits this, we stop them immediately and send an error message
-      return res.status(409).json({ 
-        success: false, 
-        message: "Too late! This seat is already booked by someone else." 
-      });
+    if (seatSnapshot.exists) {
+        const seatData = seatSnapshot.data();
+
+        if (seatData.status === 'booked') {
+            // If Customer B hits this, we stop them immediately and send an error message
+            return res.status(409).json({
+                success: false,
+                message: "Too late! This seat is already booked by someone else."
+            });
+        }
     }
-  }
 
-  //  If it's not booked, save it for this user!
-  await seatRef.set({
-    status: 'booked',
-    bookedBy: userId,
-    bookedAt: new Date()
-  });
+    //  If it's not booked, save it for this user!
+    await seatRef.set({
+        status: 'booked',
+        bookedBy: userId,
+        bookedAt: new Date()
+    });
 
-  return res.status(200).json({ 
-    success: true, 
-    message: "Seat successfully booked!" 
-  });
+    return res.status(200).json({
+        success: true,
+        message: "Seat successfully booked!"
+    });
 });
 
 
@@ -471,7 +602,7 @@ app.post("/payments", async (req, res) => {
     try {
         const payment = req.body;
         const collection = db.collection("payments");
-        const result = await collection.insertOne({...payment, createdAt: new Date()});
+        const result = await collection.insertOne({ ...payment, createdAt: new Date() });
         res.status(201).json({
             message: "Payment created successfully",
             paymentId: result.insertedId
@@ -485,7 +616,7 @@ app.post("/payments", async (req, res) => {
 });
 
 app.listen(PORT, async () => {
-  await connectToDatabase();
-  console.log(`Server is running on port ${PORT}`);
+    await connectToDatabase();
+    console.log(`Server is running on port ${PORT}`);
 });
 
