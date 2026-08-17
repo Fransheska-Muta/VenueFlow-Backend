@@ -145,35 +145,53 @@ if (!currentUser || currentUser.role !== "superAdmin") {
 // endpoint to post events
 app.post("/events", verifyFirebase, async (req, res) => {
     try {
+        //getting the user's Firebase UID
+        const uid = req.uid;
+        //finding the user in our database
+        const user = await db.collection("users").findOne({ uid });
+        //checling if they exist
+        if (!user) {
+            return res.status(404).json({
+                message: "User not found."
+            });
+        }
+        // Only managers can create events
+        if (user.role !== "manager") {
+            return res.status(403).json({
+                message: "Only managers can create events."
+            });
+        }
         const event = req.body;
         const collection = db.collection("events");
         const result = await collection.insertOne({
             ...event,
+            //storing the person who created the event
+            createdBy: uid,
             createdAt: new Date()
         });
+
         res.status(201).json({
             message: "Event created successfully",
             eventId: result.insertedId
         });
+
     } catch (error) {
         console.error(error);
+
         res.status(400).json({
             message: error.message
         });
     }
 });
-
 //  endpoint to get events
 app.get("/events", async (req, res) => {
     try {
         const collection = db.collection("events");
-        const events = await collection.find().toArray();
+        const events = await collection.find({}).toArray();
         res.status(200).json(events);
     } catch (error) {
         console.error(error);
-        res.status(500).json({
-            message: error.message
-        });
+        res.status(500).json({message: error.message})
     }
 });
 
@@ -204,7 +222,7 @@ app.put("/events/:id", async (req, res) => {
 });
 
 // endpoint to delete events
-router.delete("/:id", verifyFirebase, async (req, res) => {
+app.delete("/events/:id", async (req, res) => {
     try {
         const { id } = req.params;
         const collection = db.collection("events");
@@ -266,34 +284,22 @@ app.put("/venues/:id", verifyFirebase, async (req, res) => {
         const updatedVenue = req.body;
         const collection = db.collection("venues");
         const result = await collection.updateOne(
-            {
-                _id: new ObjectId(venueId)
-            },
-            {
-                $set: {
-                    name: updatedVenue.name,
+            { _id: new ObjectId(venueId)},
+            { $set: {name: updatedVenue.name,
                     description: updatedVenue.description,
                     address: updatedVenue.address,
                     capacity: updatedVenue.capacity,
                     rows: updatedVenue.rows,
-                    seatsPerRow: updatedVenue.seatsPerRow
-                }
-            }
-        );
-        if (result.matchedCount === 0) {
-            return res.status(404).json({
-                message: "Venue not found"
-            });
-        }
-        res.status(200).json({
+                    seatsPerRow: updatedVenue.seatsPerRow}})
+        if (result.matchedCount === 0) {return res.status(404).json({
+            message: "Venue not found"
+         });
+        }res.status(200).json({
             message: "Venue updated successfully"
         });
     } catch (error) {
         console.error(error);
-
-        res.status(500).json({
-            message: error.message
-        });
+        res.status(500).json({message: error.message});
     }
 });
 
