@@ -73,9 +73,7 @@ async function verifyFirebase(req, res, next) {
     }
 catch (error) {
     // console.error("Firebase token verification error:", error);
-    return res.status(401).json({
-        message: "Invalid token"
-    });
+    return res.status(401).json({message: "Invalid token"});
 }
 }
 
@@ -85,35 +83,42 @@ app.get("/users/:uid", async (req, res) => {
         uid: req.params.uid
     });
     if (!user) {
-        return res.status(404).json({
-            message: "User not found"
-        });
+        return res.status(404).json({message: "User not found"});
     }
     res.json(user);
 });
 
 
-// tHis is so that the superAdmin can see all users but their password is removed for safety
-app.get("/users", async (req, res) => {
-  const collection = db.collection("users");
-const currentUser = await collection.findOne({
-    uid: req.uid
-});
-if(currentUser.role !== "superAdmin"){
-    return res.status(403).json({
-        message:"Access denied"
+//this gets all users who have roles of manager only
+app.get("/users", verifyFirebase, async (req, res) => {
+    try {
+        if (req.user.role !== "superAdmin") {
+          return res.status(403).json({
+          message: "Access Denied"
+        });
+      }
+        const collection = db.collection("users");
+        const users = await collection.find({role: {$in: ["municipality"]}},
+        {projection: {
+          name: 1,
+          email: 1,
+          role: 1
+        }}).toArray();
+      res.json(users)
+    } catch (error) {
+      console.error("Error fetching users:", error);
+      res.status(500).json({
+      message: "Internal Server Error"
     });
-}
-const users = await collection.find({}).toArray();
-    res.json(users);
+  }
 });
 
 // so that the superadmin can promote users
-app.put("/users/:id/promote",async (req, res) => {
+app.put("/users/:id/promote",verifyFirebase, async (req, res) => {
 const collection = db.collection("users");
 const currentUser = await collection.findOne({
     uid: req.uid
-});
+})
 if (!currentUser || currentUser.role !== "superAdmin") {
     return res.status(403).json({
      message: "Access Denied"
@@ -127,19 +132,11 @@ if (!currentUser || currentUser.role !== "superAdmin") {
     }
     const result = await collection.updateOne(
         { _id: new ObjectId(id) },
-        { $set: {
-            role: "municipality"
-        }
-      }
-  );
+        { $set: {role: "manager"}})
     if (result.matchedCount === 0) {
-        return res.status(404).json({
-            message: "User not found"
-        });
+        return res.status(404).json({message: "User not found"});
     }
-    res.json({
-        message: "User promoted successfully"
-    });
+    res.json({message: "User promoted successfully"});
 });
 
 // endpoint to post events
@@ -155,21 +152,25 @@ app.post("/events", verifyFirebase, async (req, res) => {
                 message: "User not found."
             });
         }
-        // Only managers can create events
+        //so that ONLY managers can create events
         if (user.role !== "manager") {
             return res.status(403).json({
                 message: "Only managers can create events."
             });
         }
         const event = req.body;
+        if ( !event.name || !event.description || !event.venueId || !event.date || !event.startTime || !event.ticketSales || !event.ticketSalesClosingDate) {
+    return res.status(400).json({
+        message: "Please provide all required event information."
+    });
+}
         const collection = db.collection("events");
         const result = await collection.insertOne({
             ...event,
             //storing the person who created the event
             createdBy: uid,
             createdAt: new Date()
-        });
-
+        })
         res.status(201).json({
             message: "Event created successfully",
             eventId: result.insertedId
@@ -177,14 +178,11 @@ app.post("/events", verifyFirebase, async (req, res) => {
 
     } catch (error) {
         console.error(error);
-
-        res.status(400).json({
-            message: error.message
-        });
+        res.status(400).json({message: error.message});
     }
 });
 //  endpoint to get events
-app.get("/events", async (req, res) => {
+app.get("/events",verifyFirebase, async (req, res) => {
     try {
         const collection = db.collection("events");
         const events = await collection.find({}).toArray();
@@ -196,7 +194,7 @@ app.get("/events", async (req, res) => {
 });
 
 // endpoint to update events
-app.put("/events/:id", async (req, res) => {
+app.put("/events/:id", verifyFirebase, async (req, res) => {
     try {
         const { id } = req.params;
         const event = req.body;
@@ -206,9 +204,7 @@ app.put("/events/:id", async (req, res) => {
             { $set: { ...event, updatedAt: new Date() } }
         );
         if (result.matchedCount === 0) {
-            return res.status(404).json({
-                message: "Event not found"
-            });
+            return res.status(404).json({message: "Event not found"});
         }
         res.json({
             message: "Event updated successfully"
@@ -222,7 +218,7 @@ app.put("/events/:id", async (req, res) => {
 });
 
 // endpoint to delete events
-app.delete("/events/:id", async (req, res) => {
+app.delete("/events/:id", verifyFirebase, async (req, res) => {
     try {
         const { id } = req.params;
         const collection = db.collection("events");
@@ -313,9 +309,7 @@ app.delete("/venues/:id", verifyFirebase, async (req, res) => {
             _id: new ObjectId(venueId)
         });
         if (result.deletedCount === 0) {
-            return res.status(404).json({
-                message: "Venue not found"
-            });
+            return res.status(404).json({message: "Venue not found"})
         }
         res.status(200).json({
             message: "Venue deleted successfully"
@@ -348,7 +342,7 @@ app.delete("/venues/:id", verifyFirebase, async (req, res) => {
 
 // endpoint to post bookings (David's implementation)
 
-app.get("/bookings", async (req, res) => {
+app.get("/bookings", verifyFirebase, async (req, res) => {
     try{
         const {eventId, vanueId, selectedSeats } = req.body;
         const userId = req.user._id;
@@ -423,7 +417,7 @@ app.get("/bookings", async (req, res) => {
 
 // endpoint to get bookings history
 
-app.get("/bookings", async (req, res) => {
+app.get("/bookings", verifyFirebase, async (req, res) => {
     try {
         const collection = db.collection("bookings");
         const bookings = await collection.find({}).toArray();
@@ -437,14 +431,13 @@ app.get("/bookings", async (req, res) => {
 });
 
 
-app.post('/api/book-seat', async (req, res) => {
+app.post('/api/book-seat', verifyFirebase, async (req, res) => {
   const { eventId, seatId, userId } = req.body;
 
   //  Look up if this seat has already been saved in Firebase
   const seatRef = db.collection('events').doc(eventId).collection('bookings').doc(seatId);
   const seatSnapshot = await seatRef.get();
 
- 
   if (seatSnapshot.exists) {
     const seatData = seatSnapshot.data();
 
@@ -473,7 +466,7 @@ app.post('/api/book-seat', async (req, res) => {
 
 
 // endpoint to post payments
-app.post("/payments", async (req, res) => {
+app.post("/payments", verifyFirebase, async (req, res) => {
     try {
         const payment = req.body;
         const collection = db.collection("payments");
