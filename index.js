@@ -77,7 +77,7 @@ catch (error) {
 }
 }
 
-app.get("/users/:uid", async (req, res) => {
+app.get("/users/:uid", verifyFirebase, async (req, res) => {
     const collection = db.collection("users");
     const user = await collection.findOne({
         uid: req.params.uid
@@ -89,54 +89,187 @@ app.get("/users/:uid", async (req, res) => {
 });
 
 
-//this gets all users who have roles of manager only
+//this gets all users who have roles of manager only and puts them in the table on the superadmin dashboard
 app.get("/users", verifyFirebase, async (req, res) => {
     try {
-        if (req.user.role !== "superAdmin") {
-          return res.status(403).json({
-          message: "Access Denied"
-        });
-      }
         const collection = db.collection("users");
-        const users = await collection.find({role: {$in: ["municipality"]}},
-        {projection: {
-          name: 1,
-          email: 1,
-          role: 1
-        }}).toArray();
-      res.json(users)
+
+        // Find the currently logged-in user
+        const currentUser = await collection.findOne({
+            uid: req.uid
+        });
+
+        // Only superAdmins can view the users
+        if (!currentUser || currentUser.role !== "superAdmin") {
+            return res.status(403).json({
+                message: "Access Denied"
+            });
+        }
+
+        // Get only managers and superAdmin users
+        const users = await collection.find(
+            {
+                role: {
+                    $in: ["manager", "superAdmin"]
+                }
+            },
+            {
+                projection: {
+                    username: 1,
+                    name: 1,
+                    email: 1,
+                    role: 1
+                }
+            }
+        ).toArray();
+
+        res.json(users);
+
     } catch (error) {
-      console.error("Error fetching users:", error);
-      res.status(500).json({
-      message: "Internal Server Error"
-    });
-  }
+        console.error("Error fetching users:", error);
+
+        res.status(500).json({
+            message: "Internal Server Error"
+        });
+    }
 });
 
 // so that the superadmin can promote users
-app.put("/users/:id/promote",verifyFirebase, async (req, res) => {
-const collection = db.collection("users");
-const currentUser = await collection.findOne({
-    uid: req.uid
-})
-if (!currentUser || currentUser.role !== "superAdmin") {
-    return res.status(403).json({
-     message: "Access Denied"
-    });
-} const { id } = req.params;
-    // to make sure the id is valid
-    if (!ObjectId.isValid(id)) {
-        return res.status(400).json({
-            message: "Invalid user ID"
+app.put("/users/promote", verifyFirebase, async (req, res) => {
+    try {
+        const collection = db.collection("users");
+
+        // Find the person making the request
+        const currentUser = await collection.findOne({
+            uid: req.uid
+        });
+
+        // Only superAdmins can promote users
+        if (!currentUser || currentUser.role !== "superAdmin") {
+            return res.status(403).json({
+                message: "Access Denied"
+            });
+        }
+
+        // Get email and role from frontend
+        const { email, role } = req.body;
+
+        if (!email || !role) {
+            return res.status(400).json({
+                message: "Email and role are required"
+            });
+        }
+
+        // Only allow these roles
+        if (!["manager", "municipality"].includes(role)) {
+            return res.status(400).json({
+                message: "Invalid role selected"
+            });
+        }
+
+        // Find the user using their email
+        const user = await collection.findOne({
+            email: email.toLowerCase()
+        });
+
+        if (!user) {
+            return res.status(404).json({
+                message: "User with that email was not found"
+            });
+        }
+
+        // Don't allow changing a superAdmin
+        if (user.role === "superAdmin") {
+            return res.status(400).json({
+                message: "You cannot change a superAdmin's role"
+            });
+        }
+
+        // Change their role
+        const result = await collection.updateOne(
+            { _id: user._id },
+            {
+                $set: {
+                    role: role
+                }
+            }
+        );
+
+        if (result.modifiedCount === 0) {
+            return res.status(400).json({
+                message: "User role was not changed"
+            });
+        }
+
+        res.json({
+            message: `User promoted to ${role} successfully`
+        });
+
+    } catch (error) {
+        console.error(error);
+
+        res.status(500).json({
+            message: error.message
         });
     }
-    const result = await collection.updateOne(
-        { _id: new ObjectId(id) },
-        { $set: {role: "manager"}})
-    if (result.matchedCount === 0) {
-        return res.status(404).json({message: "User not found"});
+});
+
+// Remove a user's special role and return them to a normal user
+app.put("/users/:id/demote", verifyFirebase, async (req, res) => {
+    try {
+        const collection = db.collection("users");
+
+        // Find the person making the request
+        const currentUser = await collection.findOne({
+            uid: req.uid
+        });
+
+        // Only superAdmins can remove roles
+        if (!currentUser || currentUser.role !== "superAdmin") {
+            return res.status(403).json({
+                message: "Access Denied"
+            });
+        }
+
+        const { id } = req.params;
+
+        // Make sure the MongoDB ID is valid
+        if (!ObjectId.isValid(id)) {
+            return res.status(400).json({
+                message: "Invalid user ID"
+            });
+        }
+
+        // Prevent the superAdmin from removing their own role
+        if (currentUser._id.toString() === id) {
+            return res.status(400).json({
+                message: "You cannot remove your own superAdmin role."
+            });
+        }
+
+        // Change the user's role back to normal user
+        const result = await collection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { role: "user" } }
+        );
+
+        if (result.matchedCount === 0) {
+            return res.status(404).json({
+                message: "User not found"
+            });
+        }
+
+        res.json({
+            message: "User role removed successfully"
+        });
+
+    } catch (error) {
+        console.error(error);
+
+        res.status(500).json({
+            message: error.message
+        });
     }
-    res.json({message: "User promoted successfully"});
 });
 
 // endpoint to post events
