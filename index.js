@@ -72,10 +72,8 @@ async function verifyFirebase(req, res, next) {
     next();
   } catch (error) {
     // console.error("Firebase token verification error:", error);
-    return res.status(401).json({
-      message: "Invalid token",
-    });
-  }
+    return res.status(401).json({message: "Invalid token"});
+}
 }
 
 app.get("/users/:uid", async (req, res) => {
@@ -87,112 +85,189 @@ app.get("/users/:uid", async (req, res) => {
     return res.status(404).json({
       message: "User not found",
     });
-  }
-  res.json(user);
+    if (!user) {
+        return res.status(404).json({message: "User not found"});
+    }
+    res.json(user);
 });
 
-app.use(verifyFirebase);
 
-// tHis is so that the superAdmin can see all users but their password is removed for safety
-app.get("/users", async (req, res) => {
-  const collection = db.collection("users");
-  const currentUser = await collection.findOne({
-    uid: req.uid,
-  });
-  if (currentUser.role !== "superAdmin") {
-    return res.status(403).json({
-      message: "Access denied",
-    });
-  }
-  const users = await collection.find({}).toArray();
-  res.json(users);
+//this gets all users who have roles of manager only and puts them in the table on the superadmin dashboard
+app.get("/users", verifyFirebase, async (req, res) => {
+    try {
+        const collection = db.collection("users");
+        // Find the currently logged-in user
+        const currentUser = await collection.findOne({uid: req.uid});
+        // Only superAdmins can view the users
+        if (!currentUser || currentUser.role !== "superAdmin") {
+            return res.status(403).json({message: "Access Denied"});
+        }
+        // getting only managers and superAdmin users
+        const users = await collection.find(
+            {role: {$in: ["manager", "superAdmin"]}},
+            {projection: {username: 1, name: 1, email: 1, role: 1}}
+        ).toArray();
+        res.json(users);
+    } catch (error) {
+        console.error("Error fetching users:", error);
+        res.status(500).json({message: "Internal Server Error"});
+    }
 });
 
 // so that the superadmin can promote users
-app.put("/users/:id/promote", async (req, res) => {
-  const collection = db.collection("users");
-  const currentUser = await collection.findOne({
-    uid: req.uid,
-  });
-  if (!currentUser || currentUser.role !== "superAdmin") {
-    return res.status(403).json({
-      message: "Access Denied",
-    });
-  }
-  const { id } = req.params;
-  // to make sure the id is valid
-  if (!ObjectId.isValid(id)) {
-    return res.status(400).json({
-      message: "Invalid user ID",
-    });
-  }
-  const result = await collection.updateOne(
-    { _id: new ObjectId(id) },
-    {
-      $set: {
-        role: "municipality",
-      },
-    },
-  );
-  if (result.matchedCount === 0) {
-    return res.status(404).json({
-      message: "User not found",
-    });
-  }
-  res.json({
-    message: "User promoted successfully",
-  });
+app.put("/users/promote", verifyFirebase, async (req, res) => {
+    try {
+        const collection = db.collection("users");
+        // finding the person making the request
+        const currentUser = await collection.findOne({uid: req.uid});
+        // only superAdmins can promote users
+        if (!currentUser || currentUser.role !== "superAdmin") {
+            return res.status(403).json({message: "Access Denied"});
+        }
+        // get email and role from frontend
+        const { email, role } = req.body;
+        if (!email || !role) {
+            return res.status(400).json({message: "Email and role are required"});
+        }
+        // only allow these roles
+        if (!["manager", "superAdmin"].includes(role)) {
+            return res.status(400).json({message: "Invalid role selected"});
+        }
+
+        // finding the user using their email
+        const user = await collection.findOne({email: email.toLowerCase()});
+        if (!user) {
+            return res.status(404).json({message: "User with that email was not found"});
+        }
+        if (user.role === "superAdmin") {
+            return res.status(400).json({message: "You cannot change a superAdmin's role"});
+        }
+
+        // chaing the users role
+        const result = await collection.updateOne(
+            { _id: user._id },
+            {$set: {role: role}}
+        );
+        if (result.modifiedCount === 0) {
+            return res.status(400).json({message: "User role was not changed"});
+        }
+        res.json({message: `User promoted to ${role} successfully`});
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({message: error.message});
+    }
+});
+
+// remove a user's special role and return them to a normal user
+app.put("/users/:id/demote", verifyFirebase, async (req, res) => {
+    try {
+        const collection = db.collection("users");
+        // finding the person making the request
+        const currentUser = await collection.findOne({uid: req.uid});
+        // only superAdmins can remove roles
+        if (!currentUser || currentUser.role !== "superAdmin") {
+            return res.status(403).json({message: "Access Denied"});
+        }
+        const { id } = req.params;
+        // making sure the MongoDB id is valid
+        if (!ObjectId.isValid(id)) {
+            return res.status(400).json({message: "Invalid user ID"});
+        }
+        // preventing the superAdmin from removing their own role
+        if (currentUser._id.toString() === id) {
+            return res.status(400).json({message: "You cannot remove your own superAdmin role."});
+        }
+        // changing the user's role back to normal user
+        const result = await collection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { role: "user" } }
+        );
+
+        if (result.matchedCount === 0) {
+            return res.status(404).json({message: "User not found"});
+        }
+        res.json({message: "User role removed successfully"});
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({message: error.message});
+    }
 });
 
 // endpoint to post events
-app.post("/events", async (req, res) => {
-  try {
-    const event = req.body;
-    const collection = db.collection("events");
-    const result = await collection.insertOne({
-      ...event,
-      createdAt: new Date(),
+app.post("/events", verifyFirebase, async (req, res) => {
+    try {
+        //getting the user's Firebase UID
+        const uid = req.uid;
+        //finding the user in our database
+        const user = await db.collection("users").findOne({ uid });
+        //checling if they exist
+        if (!user) {
+            return res.status(404).json({
+                message: "User not found."
+            });
+        }
+        //so that ONLY managers can create events
+        if (user.role !== "manager") {
+            return res.status(403).json({
+                message: "Only managers can create events."
+            });
+        }
+        const event = req.body;
+        if ( !event.name || !event.description || !event.venueId || !event.date || !event.startTime || !event.ticketSales || !event.ticketSalesClosingDate) {
+    return res.status(400).json({
+        message: "Please provide all required event information."
     });
-    res.status(201).json({
-      message: "Event created successfully",
-      eventId: result.insertedId,
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(400).json({
-      message: error.message,
-    });
-  }
-});
+}
+        const collection = db.collection("events");
+        const result = await collection.insertOne({
+            ...event,
+            //storing the person who created the event
+            createdBy: uid,
+            createdAt: new Date()
+        })
+        res.status(201).json({
+            message: "Event created successfully",
+            eventId: result.insertedId
+        });
 
+    } catch (error) {
+        console.error(error);
+        res.status(400).json({message: error.message});
+    }
+});
 //  endpoint to get events
-app.get("/events", async (req, res) => {
-  try {
-    const collection = db.collection("events");
-    const events = await collection.find({}).toArray();
-    res.json(events);
-  } catch (error) {
-    console.error(error);
-    res.status(400).json({
-      message: error.message,
-    });
-  }
+app.get("/events",verifyFirebase, async (req, res) => {
+    try {
+        const collection = db.collection("events");
+        const events = await collection.find({}).toArray();
+        res.status(200).json(events);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({message: error.message})
+    }
 });
 
 // endpoint to update events
-app.put("/events/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const event = req.body;
-    const collection = db.collection("events");
-    const result = await collection.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: { ...event, updatedAt: new Date() } },
-    );
-    if (result.matchedCount === 0) {
-      return res.status(404).json({
-        message: "Event not found",
-      });
+app.put("/events/:id", verifyFirebase, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const event = req.body;
+        const collection = db.collection("events");
+        const result = await collection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { ...event, updatedAt: new Date() } }
+        );
+        if (result.matchedCount === 0) {
+            return res.status(404).json({message: "Event not found"});
+        }
+        res.json({
+            message: "Event updated successfully"
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(400).json({
+            message: error.message
+        });
     }
     res.json({
       message: "Event updated successfully",
@@ -206,15 +281,24 @@ app.put("/events/:id", async (req, res) => {
 });
 
 // endpoint to delete events
-app.delete("/events/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const collection = db.collection("events");
-    const result = await collection.deleteOne({ _id: new ObjectId(id) });
-    if (result.deletedCount === 0) {
-      return res.status(404).json({
-        message: "Event not found",
-      });
+app.delete("/events/:id", verifyFirebase, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const collection = db.collection("events");
+        const result = await collection.deleteOne({_id: new ObjectId(id)});
+        if (result.deletedCount === 0) {
+          return res.status(404).json({
+            message: "Event not found"
+          });
+        }
+        res.status(200).json({
+          message: "Event deleted successfully"
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(400).json({
+          message: error.message
+        });
     }
     res.json({
       message: "Event deleted successfully",
@@ -265,30 +349,28 @@ app.post("/venues", verifyFirebase, async (req, res) => {
 
 // endpoint to update venues
 app.put("/venues/:id", verifyFirebase, async (req, res) => {
-  try {
-    const { ObjectId } = require("mongodb");
-    const venueId = req.params.id;
-    const updatedVenue = req.body;
-    const collection = db.collection("venues");
-    const result = await collection.updateOne(
-      {
-        _id: new ObjectId(venueId),
-      },
-      {
-        $set: {
-          name: updatedVenue.name,
-          description: updatedVenue.description,
-          address: updatedVenue.address,
-          capacity: updatedVenue.capacity,
-          rows: updatedVenue.rows,
-          seatsPerRow: updatedVenue.seatsPerRow,
-        },
-      },
-    );
-    if (result.matchedCount === 0) {
-      return res.status(404).json({
-        message: "Venue not found",
-      });
+    try {
+        const { ObjectId } = require("mongodb");
+        const venueId = req.params.id;
+        const updatedVenue = req.body;
+        const collection = db.collection("venues");
+        const result = await collection.updateOne(
+            { _id: new ObjectId(venueId)},
+            { $set: {name: updatedVenue.name,
+                    description: updatedVenue.description,
+                    address: updatedVenue.address,
+                    capacity: updatedVenue.capacity,
+                    rows: updatedVenue.rows,
+                    seatsPerRow: updatedVenue.seatsPerRow}})
+        if (result.matchedCount === 0) {return res.status(404).json({
+            message: "Venue not found"
+         });
+        }res.status(200).json({
+            message: "Venue updated successfully"
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({message: error.message});
     }
     res.status(200).json({
       message: "Venue updated successfully",
@@ -304,17 +386,24 @@ app.put("/venues/:id", verifyFirebase, async (req, res) => {
 
 // endpoint to delete venues
 app.delete("/venues/:id", verifyFirebase, async (req, res) => {
-  try {
-    const { ObjectId } = require("mongodb");
-    const venueId = req.params.id;
-    const collection = db.collection("venues");
-    const result = await collection.deleteOne({
-      _id: new ObjectId(venueId),
-    });
-    if (result.deletedCount === 0) {
-      return res.status(404).json({
-        message: "Venue not found",
-      });
+    try {
+        const { ObjectId } = require("mongodb");
+        const venueId = req.params.id;
+        const collection = db.collection("venues");
+        const result = await collection.deleteOne({
+            _id: new ObjectId(venueId)
+        });
+        if (result.deletedCount === 0) {
+            return res.status(404).json({message: "Venue not found"})
+        }
+        res.status(200).json({
+            message: "Venue deleted successfully"
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({
+            message: error.message
+        });
     }
     res.status(200).json({
       message: "Venue deleted successfully",
