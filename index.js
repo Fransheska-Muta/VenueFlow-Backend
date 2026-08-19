@@ -89,7 +89,7 @@ app.get("/users/:uid", async (req, res) => {
         return res.status(404).json({message: "User not found"});
     }
     res.json(user);
-});
+}});
 
 
 //this gets all users who have roles of manager only and puts them in the table on the superadmin dashboard
@@ -269,15 +269,6 @@ app.put("/events/:id", verifyFirebase, async (req, res) => {
             message: error.message
         });
     }
-    res.json({
-      message: "Event updated successfully",
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(400).json({
-      message: error.message,
-    });
-  }
 });
 
 // endpoint to delete events
@@ -300,15 +291,6 @@ app.delete("/events/:id", verifyFirebase, async (req, res) => {
           message: error.message
         });
     }
-    res.json({
-      message: "Event deleted successfully",
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(400).json({
-      message: error.message,
-    });
-  }
 });
 
 // endpoint to get venues
@@ -372,16 +354,6 @@ app.put("/venues/:id", verifyFirebase, async (req, res) => {
         console.error(error);
         res.status(500).json({message: error.message});
     }
-    res.status(200).json({
-      message: "Venue updated successfully",
-    });
-  } catch (error) {
-    console.error(error);
-
-    res.status(500).json({
-      message: error.message,
-    });
-  }
 });
 
 // endpoint to delete venues
@@ -405,15 +377,7 @@ app.delete("/venues/:id", verifyFirebase, async (req, res) => {
             message: error.message
         });
     }
-    res.status(200).json({
-      message: "Venue deleted successfully",
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({
-      message: error.message,
-    });
-  }
+
 });
 
 // 1. GET EVENT LAYOUT & SEATS
