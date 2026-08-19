@@ -14,6 +14,7 @@ router.post("/", async (req, res) => {
         });
     }
 });
+
 router.delete("/:id", verifyFirebase, async (req, res) => {
     try {
         const { id } = req.params;
