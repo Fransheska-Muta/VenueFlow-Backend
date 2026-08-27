@@ -249,6 +249,8 @@ app.post("/events", verifyFirebase, async (req, res) => {
     res.status(400).json({ message: error.message });
   }
 });
+
+
 //  endpoint to get events
 app.get("/events", verifyFirebase, async (req, res) => {
   try {
