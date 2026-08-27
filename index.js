@@ -3,12 +3,14 @@ const cors = require("cors");
 const express = require("express");
 const axios = require("axios");
 const app = express();
+const fs = require("fs");
+const path = require("path");
 app.use(cors());
 
 const PORT = process.env.PORT || 3000;
 app.use(express.json());
 
-// MongoDB connection setup  
+// MongoDB connection setup
 const uri = process.env.MONGODB_URI;
 const { MongoClient, ObjectId } = require("mongodb");
 // const base64 = require("base-64"); Here is where we use firebase
@@ -17,606 +19,1951 @@ let db;
 
 // Function to connect to MongoDB
 async function connectToDatabase() {
-    client = new MongoClient("mongodb://mutafransheska45_db_user:5rVMsR3IuUzDxesL@ac-qf5otbx-shard-00-00.trertll.mongodb.net:27017,ac-qf5otbx-shard-00-01.trertll.mongodb.net:27017,ac-qf5otbx-shard-00-02.trertll.mongodb.net:27017/?ssl=true&replicaSet=atlas-13vop3-shard-0&authSource=admin&appName=Venue-Flow");
-    await client.connect();
-    db = client.db("VenueFlow");
+  client = new MongoClient(
+    "mongodb://mutafransheska45_db_user:5rVMsR3IuUzDxesL@ac-qf5otbx-shard-00-00.trertll.mongodb.net:27017,ac-qf5otbx-shard-00-01.trertll.mongodb.net:27017,ac-qf5otbx-shard-00-02.trertll.mongodb.net:27017/?ssl=true&replicaSet=atlas-13vop3-shard-0&authSource=admin&appName=Venue-Flow",
+  );
+  await client.connect();
+  db = client.db("VenueFlow");
 }
 
 // Endpoint to handle user signup
 app.post("/signup", async (req, res) => {
-    try {
-        const user = req.body;
-        if (!user.uid)
-            throw new Error("Missing Firebase UID");
-        if (!user.username)
-            throw new Error("Username is missing");
-        if (!user.email)
-            throw new Error("Email is missing");
+  try {
+    const user = req.body;
+    if (!user.uid) throw new Error("Missing Firebase UID");
+    if (!user.username) throw new Error("Username is missing");
+    if (!user.email) throw new Error("Email is missing");
 
-        const collection = db.collection("users");
-        const existingUser = await collection.findOne({ uid: user.uid });
-        if (existingUser) {
-            return res.status(400).json({ message: "User already exists" });
-        }
-
-        // Every users starts as a normal user
-        user.role = "user";
-        const result = await collection.insertOne({
-            ...user, createdAt: new Date()
-        });
-        res.status(201).json({
-            message: "Account created successfully",
-            userId: result.insertedId,
-        });
-    } catch (error) {
-        console.error(error);
-        res.status(400).json({
-            message: error.message
-        });
+    const collection = db.collection("users");
+    const existingUser = await collection.findOne({ uid: user.uid });
+    if (existingUser) {
+      return res.status(400).json({ message: "User already exists" });
     }
+
+    // Every users starts as a normal user
+    user.role = "user";
+    const result = await collection.insertOne({
+      ...user,
+      createdAt: new Date(),
+    });
+    res.status(201).json({
+      message: "Account created successfully",
+      userId: result.insertedId,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(400).json({
+      message: error.message,
+    });
+  }
 });
 
-const auth = require("./firebaseAdmin")
+const auth = require("./firebaseAdmin");
 async function verifyFirebase(req, res, next) {
-    // console.log("verifyFirebase was called");
-    const header = req.headers.authorization;
-    if (!header) {
-        return res.status(401).json({
-            message: "No token"
-        });
-    }
-    const token = header.split(" ")[1];
-    try {
-        const decoded = await auth.verifyIdToken(token);
-        req.uid = decoded.uid;
-        next();
-    }
-    catch (error) {
-        // console.error("Firebase token verification error:", error);
-        return res.status(401).json({
-            message: "Invalid token"
-        });
-    }
+  // console.log("verifyFirebase was called");
+  const header = req.headers.authorization;
+  if (!header) {
+    return res.status(401).json({
+      message: "No token",
+    });
+  }
+  const token = header.split(" ")[1];
+  try {
+    const decoded = await auth.verifyIdToken(token);
+    req.uid = decoded.uid;
+    next();
+  } catch (error) {
+    // console.error("Firebase token verification error:", error);
+    return res.status(401).json({ message: "Invalid token" });
+  }
 }
 
+// handles login
 app.get("/users/:uid", async (req, res) => {
+  try {
     const collection = db.collection("users");
-    const user = await collection.findOne({
-        uid: req.params.uid
-    });
+    const user = await collection.findOne({ uid: req.params.uid });
     if (!user) {
-        return res.status(404).json({
-            message: "User not found"
-        });
+      return res.status(404).json({ message: "User not found" });
     }
     res.json(user);
+  } catch (error) {
+    console.error("Error fetching user:", error);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
 });
 
-
-// tHis is so that the superAdmin can see all users but their password is removed for safety
-app.get("/users", async (req, res) => {
+//this gets all users who have roles of manager only and puts them in the table on the superadmin dashboard
+app.get("/users", verifyFirebase, async (req, res) => {
+  try {
     const collection = db.collection("users");
-    const currentUser = await collection.findOne({
-        uid: req.uid
-    });
-    if (currentUser.role !== "superAdmin") {
-        return res.status(403).json({
-            message: "Access denied"
-        });
+    // Find the currently logged-in user
+    const currentUser = await collection.findOne({ uid: req.uid });
+    // Only superAdmins can view the users
+    if (!currentUser || currentUser.role !== "superAdmin") {
+      return res.status(403).json({ message: "Access Denied" });
     }
-    const users = await collection.find({}).toArray();
+    // getting only managers and superAdmin users
+    const users = await collection
+      .find(
+        { role: { $in: ["manager", "superAdmin"] } },
+        { projection: { username: 1, name: 1, email: 1, role: 1 } },
+      )
+      .toArray();
     res.json(users);
+  } catch (error) {
+    console.error("Error fetching users:", error);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
 });
 
 // so that the superadmin can promote users
-app.put("/users/:id/promote", async (req, res) => {
+app.put("/users/promote", verifyFirebase, async (req, res) => {
+  try {
     const collection = db.collection("users");
-    const currentUser = await collection.findOne({
-        uid: req.uid
-    });
+    // finding the person making the request
+    const currentUser = await collection.findOne({ uid: req.uid });
+    // only superAdmins can promote users
     if (!currentUser || currentUser.role !== "superAdmin") {
-        return res.status(403).json({
-            message: "Access Denied"
-        });
-    } const { id } = req.params;
-    // to make sure the id is valid
-    if (!ObjectId.isValid(id)) {
-        return res.status(400).json({
-            message: "Invalid user ID"
-        });
+      return res.status(403).json({ message: "Access Denied" });
     }
+    // get email and role from frontend
+    const { email, role } = req.body;
+    if (!email || !role) {
+      return res.status(400).json({ message: "Email and role are required" });
+    }
+    // only allow these roles
+    if (!["manager", "superAdmin"].includes(role)) {
+      return res.status(400).json({ message: "Invalid role selected" });
+    }
+
+    // finding the user using their email
+    const user = await collection.findOne({ email: email.toLowerCase() });
+    if (!user) {
+      return res
+        .status(404)
+        .json({ message: "User with that email was not found" });
+    }
+    if (user.role === "superAdmin") {
+      return res
+        .status(400)
+        .json({ message: "You cannot change a superAdmin's role" });
+    }
+
+    // chaing the users role
     const result = await collection.updateOne(
-        { _id: new ObjectId(id) },
-        {
-            $set: {
-                role: "municipality"
-            }
-        }
+      { _id: user._id },
+      { $set: { role: role } },
     );
-    if (result.matchedCount === 0) {
-        return res.status(404).json({
-            message: "User not found"
-        });
+    if (result.modifiedCount === 0) {
+      return res.status(400).json({ message: "User role was not changed" });
     }
-    res.json({
-        message: "User promoted successfully"
-    });
+    res.json({ message: `User promoted to ${role} successfully` });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// remove a user's special role and return them to a normal user
+app.put("/users/:id/demote", verifyFirebase, async (req, res) => {
+  try {
+    const collection = db.collection("users");
+    // finding the person making the request
+    const currentUser = await collection.findOne({ uid: req.uid });
+    // only superAdmins can remove roles
+    if (!currentUser || currentUser.role !== "superAdmin") {
+      return res.status(403).json({ message: "Access Denied" });
+    }
+    const { id } = req.params;
+    // making sure the MongoDB id is valid
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Invalid user ID" });
+    }
+    // preventing the superAdmin from removing their own role
+    if (currentUser._id.toString() === id) {
+      return res
+        .status(400)
+        .json({ message: "You cannot remove your own superAdmin role." });
+    }
+    // changing the user's role back to normal user
+    const result = await collection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { role: "user" } },
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    res.json({ message: "User role removed successfully" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: error.message });
+  }
 });
 
 // endpoint to post events
 app.post("/events", verifyFirebase, async (req, res) => {
-    try {
-        const event = req.body;
-        const collection = db.collection("events");
-        const result = await collection.insertOne({
-            ...event,
-            createdAt: new Date()
-        });
-        res.status(201).json({
-            message: "Event created successfully",
-            eventId: result.insertedId
-        });
-    } catch (error) {
-        console.error(error);
-        res.status(400).json({
-            message: error.message
-        });
+  try {
+    //getting the user's Firebase UID
+    const uid = req.uid;
+    //finding the user in our database
+    const user = await db.collection("users").findOne({ uid });
+    //checling if they exist
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found.",
+      });
     }
+    //so that ONLY managers can create events
+    if (user.role !== "manager") {
+      return res.status(403).json({
+        message: "Only managers can create events.",
+      });
+    }
+    const event = req.body;
+    if (
+      !event.name ||
+      !event.description ||
+      !event.venueId ||
+      !event.date ||
+      !event.startTime ||
+      !event.ticketSales ||
+      !event.ticketSalesClosingDate
+    ) {
+      return res.status(400).json({
+        message: "Please provide all required event information.",
+      });
+    }
+    const collection = db.collection("events");
+    const result = await collection.insertOne({
+      ...event,
+      //storing the person who created the event
+      createdBy: uid,
+      createdAt: new Date(),
+    });
+    res.status(201).json({
+      message: "Event created successfully",
+      eventId: result.insertedId,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(400).json({ message: error.message });
+  }
 });
-
 //  endpoint to get events
-app.get("/events", async (req, res) => {
-    try {
-        const collection = db.collection("events");
-        const events = await collection.find().toArray();
-        res.status(200).json(events);
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({
-            message: error.message
-        });
-    }
+app.get("/events", verifyFirebase, async (req, res) => {
+  try {
+    const collection = db.collection("events");
+    const events = await collection.find({}).toArray();
+    res.status(200).json(events);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: error.message });
+  }
 });
 
 // endpoint to update events
-app.put("/events/:id", async (req, res) => {
-    try {
-        const { id } = req.params;
-        const event = req.body;
-        const collection = db.collection("events");
-        const result = await collection.updateOne(
-            { _id: new ObjectId(id) },
-            { $set: { ...event, updatedAt: new Date() } }
-        );
-        if (result.matchedCount === 0) {
-            return res.status(404).json({
-                message: "Event not found"
-            });
-        }
-        res.json({
-            message: "Event updated successfully"
-        });
-    } catch (error) {
-        console.error(error);
-        res.status(400).json({
-            message: error.message
-        });
+app.put("/events/:id", verifyFirebase, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const event = req.body;
+    const collection = db.collection("events");
+    const result = await collection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { ...event, updatnodeedAt: new Date() } },
+    );
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ message: "Event not found" });
     }
+    res.json({
+      message: "Event updated successfully",
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(400).json({
+      message: error.message,
+    });
+  }
 });
 
 // endpoint to delete events
-// router.delete("/:id", verifyFirebase, async (req, res) => {
-//     try {
-//         const { id } = req.params;
-//         const collection = db.collection("events");
-//         const result = await collection.deleteOne({_id: new ObjectId(id)});
-//         if (result.deletedCount === 0) {
-//           return res.status(404).json({
-//             message: "Event not found"
-//           });
-//         }
-//         res.status(200).json({
-//           message: "Event deleted successfully"
-//         });
-//     } catch (error) {
-//         console.error(error);
-//         res.status(400).json({
-//           message: error.message
-//         });
-//     }
-// });
+app.delete("/events/:id", verifyFirebase, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const collection = db.collection("events");
+    const result = await collection.deleteOne({ _id: new ObjectId(id) });
+    if (result.deletedCount === 0) {
+      return res.status(404).json({
+        message: "Event not found",
+      });
+    }
+    res.status(200).json({
+      message: "Event deleted successfully",
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(400).json({
+      message: error.message,
+    });
+  }
+});
 
 // endpoint to get venues
 app.get("/venues", verifyFirebase, async (req, res) => {
-    try {
-        const collection = db.collection("venues");
-        const venues = await collection.find({}).toArray();
-        res.json(venues);
-    } catch (error) {
-        console.error(error);
-        res.status(400).json({
-            message: error.message
-        });
-    }
+  try {
+    const collection = db.collection("venues");
+    const venues = await collection.find({}).toArray();
+    res.json(venues);
+  } catch (error) {
+    console.error(error);
+    res.status(400).json({
+      message: error.message,
+    });
+  }
 });
 
 // endpoint to post venues
 app.post("/venues", verifyFirebase, async (req, res) => {
-    console.log("VENUES ENDPOINT WAS HIT");
-    try {
-        const venue = req.body;
-        const collection = db.collection("venues");
-        const result = await collection.insertOne({ ...venue, createdAt: new Date() });
-        res.status(201).json({
-            message: "Venue created successfully",
-            venueId: result.insertedId
-        });
-    } catch (error) {
-        console.error(error);
-        res.status(400).json({
-            message: error.message
-        });
-    }
+  console.log("VENUES ENDPOINT WAS HIT");
+  try {
+    const venue = req.body;
+    const collection = db.collection("venues");
+    const result = await collection.insertOne({
+      ...venue,
+      createdAt: new Date(),
+    });
+    res.status(201).json({
+      message: "Venue created successfully",
+      venueId: result.insertedId,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(400).json({
+      message: error.message,
+    });
+  }
 });
 
 // endpoint to update venues
 app.put("/venues/:id", verifyFirebase, async (req, res) => {
-    try {
-        const { ObjectId } = require("mongodb");
-        const venueId = req.params.id;
-        const updatedVenue = req.body;
-        const collection = db.collection("venues");
-        const result = await collection.updateOne(
-            {
-                _id: new ObjectId(venueId)
-            },
-            {
-                $set: {
-                    name: updatedVenue.name,
-                    description: updatedVenue.description,
-                    address: updatedVenue.address,
-                    capacity: updatedVenue.capacity,
-                    rows: updatedVenue.rows,
-                    seatsPerRow: updatedVenue.seatsPerRow
-                }
-            }
-        );
-        if (result.matchedCount === 0) {
-            return res.status(404).json({
-                message: "Venue not found"
-            });
-        }
-        res.status(200).json({
-            message: "Venue updated successfully"
-        });
-    } catch (error) {
-        console.error(error);
-
-        res.status(500).json({
-            message: error.message
-        });
+  try {
+    const { ObjectId } = require("mongodb");
+    const venueId = req.params.id;
+    const updatedVenue = req.body;
+    const collection = db.collection("venues");
+    const result = await collection.updateOne(
+      { _id: new ObjectId(venueId) },
+      {
+        $set: {
+          name: updatedVenue.name,
+          description: updatedVenue.description,
+          address: updatedVenue.address,
+          capacity: updatedVenue.capacity,
+          rows: updatedVenue.rows,
+          seatsPerRow: updatedVenue.seatsPerRow,
+        },
+      },
+    );
+    if (result.matchedCount === 0) {
+      return res.status(404).json({
+        message: "Venue not found",
+      });
     }
+    res.status(200).json({
+      message: "Venue updated successfully",
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: error.message });
+  }
 });
 
 // endpoint to delete venues
 app.delete("/venues/:id", verifyFirebase, async (req, res) => {
-    try {
-        const { ObjectId } = require("mongodb");
-        const venueId = req.params.id;
-        const collection = db.collection("venues");
-        const result = await collection.deleteOne({
-            _id: new ObjectId(venueId)
-        });
-        if (result.deletedCount === 0) {
-            return res.status(404).json({
-                message: "Venue not found"
-            });
-        }
-        res.status(200).json({
-            message: "Venue deleted successfully"
-        });
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({
-            message: error.message
-        });
+  try {
+    const { ObjectId } = require("mongodb");
+    const venueId = req.params.id;
+    const collection = db.collection("venues");
+    const result = await collection.deleteOne({
+      _id: new ObjectId(venueId),
+    });
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ message: "Venue not found" });
     }
+    res.status(200).json({
+      message: "Venue deleted successfully",
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      message: error.message,
+    });
+  }
 });
 
-// endpoint to post bookings
-// app.post("/bookings", async (req, res) => {
-//     try {
-//         const booking = req.body;
-//         const collection = db.collection("bookings");
-//         const result = await collection.insertOne({...booking, createdAt: new Date()});
-//         res.status(201).json({
-//             message: "Booking created successfully",
-//             bookingId: result.insertedId
-//         });
-//     } catch (error) {
-//         console.error(error);
-//         res.status(400).json({
-//             message: error.message
-//         });
-//     }
-// });
+// 1. GET EVENT LAYOUT & SEATS
+app.post("/events/:eventId/book-seat", async (req, res) => {
+  try {
+    const { eventId } = req.params;
+    const { seatId, userId } = req.body; // e.g., seatId = "A12"
+
+    if (!ObjectId.isValid(eventId)) {
+      return res.status(400).json({ message: "Invalid Event ID" });
+    }
+
+    const eventsCollection = db.collection("events");
+    const event = await eventsCollection.findOne({
+      _id: new ObjectId(eventId),
+    });
+
+    if (!event) {
+      return res.status(404).json({ message: "Event not found" });
+    }
+
+    const venueId = event.venueId;
+    if (!venueId) {
+      return res
+        .status(400)
+        .json({ message: "This event does not have a venue assigned." });
+    }
+
+    // 1. Fetch layout rules from the venues collection
+    const venuesCollection = db.collection("venues");
+    const venue = await venuesCollection.findOne({
+      _id: new ObjectId(venueId),
+    });
+
+    if (!venue || !venue.rows || !venue.seatsPerRow) {
+      return res
+        .status(404)
+        .json({ message: "Venue layout configuration parameters not found." });
+    }
+
+    // 2. Validate if the requested seat identifier matches the physical layout grid rules
+    // Extracts row letters and seat numbers (e.g., "A12" -> row: "A", number: 12)
+    const match = seatId.match(/^([A-Z]+)(\d+)$/);
+    if (!match) {
+      return res
+        .status(400)
+        .json({ message: "Invalid seat format structure." });
+    }
+
+    const rowLetter = match[1];
+    const seatNum = parseInt(match[2], 10);
+
+    // Convert row letter back to a number index (A=1, B=2, etc.)
+    const rowNum = rowLetter.charCodeAt(0) - 64;
+
+    if (
+      rowNum < 1 ||
+      rowNum > venue.rows ||
+      seatNum < 1 ||
+      seatNum > venue.seatsPerRow
+    ) {
+      return res
+        .status(400)
+        .json({ message: "Seat is outside of physical venue boundaries." });
+    }
+
+    // Initialize the event's dynamic bookings array if it doesn't exist yet
+    const currentBookings = event.seats || [];
+    const existingSeatRecord = currentBookings.find((s) => s.id === seatId);
+
+    let updatedStatus = "locked";
+    let lockedBy = userId;
+    let action = "locked";
+
+    if (existingSeatRecord) {
+      if (existingSeatRecord.status === "booked") {
+        return res.status(409).json({ message: "Seat permanently booked." });
+      }
+
+      if (existingSeatRecord.status === "locked") {
+        if (existingSeatRecord.lockedBy === userId) {
+          // unlock if the same user clicks it again
+          updatedStatus = "available";
+          lockedBy = null;
+          action = "unlocked";
+        } else {
+          return res
+            .status(409)
+            .json({ message: "Seat held by another user." });
+        }
+      }
+    }
+
+    // 3. Persist the seat state directly inside the events collection
+    if (!existingSeatRecord) {
+      // First time this seat is interacting with this specific event
+      await eventsCollection.updateOne(
+        { _id: new ObjectId(eventId) },
+        {
+          $push: {
+            seats: { id: seatId, status: updatedStatus, lockedBy: lockedBy },
+          },
+        },
+      );
+    } else {
+      // Update the existing state within the event document array
+      await eventsCollection.updateOne(
+        { _id: new ObjectId(eventId), "seats.id": seatId },
+        {
+          $set: {
+            "seats.$.status": updatedStatus,
+            "seats.$.lockedBy": lockedBy,
+          },
+        },
+      );
+    }
+
+    return res
+      .status(200)
+      .json({ action, message: `Status updated to: ${updatedStatus}` });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// Add this route to your Express backend server file (e.g., app.js or server.js)
+app.get("/events/:eventId/seats", async (req, res) => {
+  try {
+    const { eventId } = req.params;
+
+    if (!ObjectId.isValid(eventId)) {
+      return res.status(400).json({ message: "Invalid Event ID structure." });
+    }
+
+    // 1. Find the target event
+    const eventsCollection = db.collection("events");
+    const event = await eventsCollection.findOne({ _id: new ObjectId(eventId) });
+
+    if (!event) {
+      return res.status(404).json({ message: "Requested event could not be found." });
+    }
+
+    // 2. Extract the linked venue ID 
+    const venueId = event.venueId;
+    if (!venueId) {
+      return res.status(400).json({ message: "This event does not have an assigned venue layout." });
+    }
+
+    // 3. Find the venue matching parameters (rows and seatsPerRow)
+    const venuesCollection = db.collection("venues");
+    const venue = await venuesCollection.findOne({ _id: new ObjectId(venueId) });
+
+    if (!venue || !venue.rows || !venue.seatsPerRow) {
+      return res.status(404).json({ message: "The structural dimensions for this venue are missing." });
+    }
+
+    // 4. Send back a combined JSON payload that aligns perfectly with your React component
+    return res.status(200).json({
+      _id: event._id,
+      name: event.name,
+      venueId: venueId,
+      rows: venue.rows,                  // Sent down to feed the frontend grid generator loop
+      seatsPerRow: venue.seatsPerRow,    // Sent down to feed the CSS column rule layout
+      seats: event.seats || []           // Merges active seat booking status arrays
+    });
+
+  } catch (error) {
+    console.error("Backend Layout Fetch Crash:", error);
+    return res.status(500).json({ message: "Internal server error occurred." });
+  }
+});
+
+
+
 
 // endpoint to post bookings (David's implementation)
+app.post("/bookings", async (req, res) => {
+  try {
+    const { eventId, venueId, selectedSeats } = req.body;
+    const userId = req.user?._id; // Ensure your auth middleware sets req.user
 
-app.get("/bookings", async (req, res) => {
-    try {
-        const { eventId, vanueId, selectedSeats } = req.body;
-        const userId = req.user._id;
-
-        if (!eventId || !venueId || !selectedSeats || !Array.isArray(selectedSeats) || selectedSeats.length === 0) {
-            return res.status(400).json({ message: "Missing or malformed payload fields." });
-        }
-        if (!ObjectId.isValid(eventId) || !ObjectId.isValid(venueId)) {
-            return res.status(400).json({ message: "Invalid eventId or venueId." });
-        }
-        const seatCollection = db.collection("seats");
-        const bookingCollection = db.collection("bookings");
-
-        const seatObjectIds = selectedSeats.map(id => {
-            if (!ObjectId.isValid(id)) {
-                throw new Error(`Invalid seat ID: ${id}`);
-            }
-            return new ObjectId(id);
-        });
-
-        const dbSeats = await seatCollextion.find({
-            _id: { $in: seatObjectIds },
-            eventId: new ObjectId(eventId),
-        }).toArray();
-
-        if (dbSeats.length !== selectedSeats.length) {
-            return res.status(400).json({ message: "Some selected seats do not exist for the given event." });
-        }
-
-        const isAnySeatTaken = dbSeats.some(seat => seat.status !== "available");
-        if (isAnySeatTaken) {
-            return res.status(400).json({ message: "One or more selected seats are already booked." });
-        }
-
-        let calculatedTotal = 0;
-        dbSeats.forEach(seat => {
-            calculatedTotal += seat.price;
-        });
-
-        const bookingReference = `VenueFlow-${Math.random().toString(36).substr(2, 9)}.toUpperCase()`;
-
-        const newBooking = {
-            customer_id: new ObjectId(userId),
-            event_id: new ObjectId(eventId),
-            venue_id: new ObjectId(venueId),
-            selectedSeats: seatObjectIds,
-            totalPrice: calculatedTotal,
-            bookingReference: bookingReference,
-            bookingStatus: "confirmed",
-            createdAt: new Date(),
-        };
-
-        const result = await bookingCollection.insertOne(newBooking);
-        await seatCollection.updateMany(
-            { _id: { $in: seatObjectIds } },
-            { $set: { status: "booked", updatedByBooking: result.insertedId } }
-        );
-        return res.status(201).json({
-            message: "Booking created successfully",
-            bookingId: result.insertedId,
-            totalPrice: calculatedTotal,
-            bookingReference: bookingReference,
-            bookingStatus: newBooking.bookingStatus
-        });
-    } catch (error) {
-        console.error(error);
-        return res.status(400).json({
-            message: error.message
-        });
+    if (
+      !eventId ||
+      !venueId ||
+      !selectedSeats ||
+      !Array.isArray(selectedSeats) ||
+      selectedSeats.length === 0
+    ) {
+      return res
+        .status(400)
+        .json({ message: "Missing or malformed payload fields." });
     }
+    if (
+      !ObjectId.isValid(eventId) ||
+      !ObjectId.isValid(venueId) ||
+      !ObjectId.isValid(userId)
+    ) {
+      return res
+        .status(400)
+        .json({ message: "Invalid payload identification IDs." });
+    }
+
+    const eventsCollection = db.collection("events");
+    const bookingsCollection = db.collection("bookings");
+
+    // Fetch the target event containing the nested seats array
+    const event = await eventsCollection.findOne({
+      _id: new ObjectId(eventId),
+    });
+    if (!event || !event.seats) {
+      return res
+        .status(404)
+        .json({ message: "Event layout not initialized or found." });
+    }
+
+    // Verify selected seats match and are currently held by this user
+    const matchingSeats = event.seats.filter((s) =>
+      selectedSeats.includes(s.id),
+    );
+
+    if (matchingSeats.length !== selectedSeats.length) {
+      return res
+        .status(400)
+        .json({ message: "Some selected seats do not exist in the layout." });
+    }
+
+    const verificationFailed = matchingSeats.some(
+      (s) => s.status !== "locked" || String(s.lockedBy) !== String(userId),
+    );
+    if (verificationFailed) {
+      return res.status(400).json({
+        message: "One or more seats are no longer locked by your session.",
+      });
+    }
+
+    // 4. Calculate total cost using a standard pricing fallback token
+    const seatPrice = event.ticketPrice; // Use event pricing or fallback base price
+    const calculatedTotal = matchingSeats.length * seatPrice;
+
+    // Generate a clean random booking reference hash string uppercase
+    const randomHash = Math.random()
+      .toString(36)
+      .substring(2, 11)
+      .toUpperCase();
+    const bookingReference = `NOVUS-${randomHash}`;
+
+    // Save structural registration details inside the bookings collection
+    const newBooking = {
+      customer_id: new ObjectId(userId),
+      event_id: new ObjectId(eventId),
+      venue_id: new ObjectId(venueId),
+      seats: selectedSeats, // Stores array strings ['A1', 'A2']
+      totalPrice: calculatedTotal,
+      bookingReference: bookingReference,
+      bookingStatus: "confirmed",
+      createdAt: new Date(),
+    };
+
+    const result = await bookingsCollection.insertOne(newBooking);
+
+    // Loop updates to flip targeted seats inside the event array cleanly from locked to booked
+    await eventsCollection.updateOne(
+      { _id: new ObjectId(eventId) },
+      {
+        $set: {
+          "seats.$[elem].status": "booked",
+          "seats.$[elem].lockedBy": null,
+          "seats.$[elem].bookingId": result.insertedId,
+        },
+      },
+      {
+        arrayFilters: [{ "elem.id": { $in: selectedSeats } }],
+      },
+    );
+
+    return res.status(201).json({
+      message: "Booking created successfully",
+      bookingId: result.insertedId,
+      totalPrice: calculatedTotal,
+      bookingReference: bookingReference,
+      bookingStatus: "confirmed",
+    });
+  } catch (error) {
+    console.error("Booking transactional fault:", error);
+    return res.status(500).json({ message: error.message });
+  }
 });
 
 // endpoint to get bookings history
 
 app.get("/bookings", async (req, res) => {
-    try {
-        const collection = db.collection("bookings");
-        const bookings = await collection.find({}).toArray();
-        res.json(bookings);
-    } catch (error) {
-        console.error(error);
-        res.status(400).json({
-            message: error.message
-        });
-    }
+  try {
+    const collection = db.collection("bookings");
+    const bookings = await collection.find({}).toArray();
+    res.json(bookings);
+  } catch (error) {
+    console.error(error);
+    res.status(400).json({
+      message: error.message,
+    });
+  }
 });
 
-// Create a booking
-app.post("/bookings", async (req, res) => {
+require("dotenv").config();
+
+const express = require("express");
+const cors = require("cors");
+const crypto = require("crypto");
+const { MongoClient, ObjectId } = require("mongodb");
+
+const app = express();
+
+const PORT = process.env.PORT || 5000;
+
+const MONGODB_URI =
+  process.env.MONGODB_URI;
+
+const DB_NAME =
+  process.env.DB_NAME || "venueflow";
+
+const PAYSTACK_SECRET_KEY =
+  process.env.PAYSTACK_SECRET_KEY;
+
+const FRONTEND_URL =
+  process.env.FRONTEND_URL ||
+  "http://localhost:5173";
+
+
+/*
+==================================================
+CHECK ENVIRONMENT
+==================================================
+*/
+
+if (!PAYSTACK_SECRET_KEY) {
+  console.error(
+    "ERROR: PAYSTACK_SECRET_KEY is missing from .env"
+  );
+
+  process.exit(1);
+}
+
+
+/*
+==================================================
+CORS
+==================================================
+*/
+
+app.use(
+  cors({
+    origin: FRONTEND_URL
+  })
+);
+
+
+/*
+==================================================
+MONGODB
+==================================================
+*/
+
+const client =
+  new MongoClient(MONGODB_URI);
+
+let db;
+
+let bookings;
+let payments;
+let events;
+let venues;
+
+
+async function connectDatabase() {
+
+  await client.connect();
+
+  db = client.db(DB_NAME);
+
+  bookings =
+    db.collection("bookings");
+
+  payments =
+    db.collection("payments");
+
+  events =
+    db.collection("events");
+
+  venues =
+    db.collection("venues");
+
+  console.log(
+    "MongoDB connected successfully"
+  );
+}
+
+
+/*
+==================================================
+NORMAL JSON
+==================================================
+*/
+
+app.use(express.json());
+
+
+/*
+==================================================
+GENERATE PAYMENT REFERENCE
+==================================================
+*/
+
+function generateReference() {
+
+  return (
+    "NOVUS-" +
+    Date.now() +
+    "-" +
+    crypto
+      .randomBytes(4)
+      .toString("hex")
+  );
+}
+
+
+/*
+==================================================
+1. INITIALIZE PAYSTACK PAYMENT
+==================================================
+
+React sends:
+
+{
+  bookingId: "...",
+  email: "customer@email.com"
+}
+
+NOT the amount.
+
+The server gets totalPrice directly
+from MongoDB.
+==================================================
+*/
+
+app.post(
+  "/api/payments/initialize",
+  async (req, res) => {
+
     try {
-        const {
-            venueId,
-            venueName,
-            userId,
-            date,
-            startTime,
-            endTime
-        } = req.body;
 
-        // Check required information
-        if (!venueId || !userId || !date || !startTime || !endTime) {
-            return res.status(400).json({
-                message: "Please provide venue, user, date, start time and end time"
-            });
-        }
+      const {
+        bookingId,
+        email
+      } = req.body;
 
-        // Make sure the ending time is after starting time
-        if (startTime >= endTime) {
-            return res.status(400).json({
-                message: "End time must be after start time"
-            });
-        }
 
-        const collection = db.collection("bookings");
+      /*
+      ------------------------------------------
+      VALIDATE
+      ------------------------------------------
+      */
 
-        // Check for an existing booking that overlaps
-        const existingBooking = await collection.findOne({
-            venueId: venueId,
-            date: date,
-            status: { $ne: "cancelled" },
-            startTime: { $lt: endTime },
-            endTime: { $gt: startTime }
+      if (!bookingId) {
+
+        return res.status(400).json({
+          success: false,
+          message:
+            "bookingId is required"
+        });
+      }
+
+
+      if (!email) {
+
+        return res.status(400).json({
+          success: false,
+          message:
+            "Customer email is required"
+        });
+      }
+
+
+      /*
+      ------------------------------------------
+      CONVERT BOOKING ID
+      ------------------------------------------
+      */
+
+      let bookingObjectId;
+
+      try {
+
+        bookingObjectId =
+          new ObjectId(bookingId);
+
+      } catch {
+
+        return res.status(400).json({
+          success: false,
+          message:
+            "Invalid booking ID"
+        });
+      }
+
+
+      /*
+      ------------------------------------------
+      FIND BOOKING
+      ------------------------------------------
+      */
+
+      const booking =
+        await bookings.findOne({
+          _id: bookingObjectId
         });
 
-        // Stop double booking
-        if (existingBooking) {
-            return res.status(409).json({
-                message: "This venue is already booked for this time.",
-                bookingId: existingBooking._id
-            });
-        }
 
-        // Create the booking
-        const booking = {
-            venueId,
-            venueName,
-            userId,
-            date,
-            startTime,
-            endTime,
-            status: "confirmed",
-            createdAt: new Date()
-        };
+      if (!booking) {
 
-        const result = await collection.insertOne(booking);
+        return res.status(404).json({
+          success: false,
+          message:
+            "Booking not found"
+        });
+      }
 
-        res.status(201).json({
-            message: "Booking created successfully",
-            bookingId: result.insertedId
+
+      /*
+      ------------------------------------------
+      DON'T PAY FOR CONFIRMED BOOKING
+      ------------------------------------------
+      */
+
+      if (
+        booking.bookingStatus ===
+        "confirmed"
+      ) {
+
+        return res.status(400).json({
+          success: false,
+          message:
+            "This booking is already confirmed"
+        });
+      }
+
+
+      /*
+      ------------------------------------------
+      GET AMOUNT FROM DATABASE
+      ------------------------------------------
+      */
+
+      const amount =
+        Number(booking.totalPrice);
+
+
+      if (
+        !Number.isFinite(amount) ||
+        amount <= 0
+      ) {
+
+        return res.status(400).json({
+          success: false,
+          message:
+            "Invalid booking totalPrice"
+        });
+      }
+
+
+      /*
+      ------------------------------------------
+      PAYSTACK AMOUNT
+      ------------------------------------------
+
+      R150
+      ↓
+      15000
+
+      Paystack uses the smallest currency unit.
+      */
+
+      const paystackAmount =
+        Math.round(amount * 100);
+
+
+      /*
+      ------------------------------------------
+      CHECK EXISTING SUCCESSFUL PAYMENT
+      ------------------------------------------
+      */
+
+      const existingPayment =
+        await payments.findOne({
+          bookingId:
+            booking._id,
+
+          status:
+            "success"
         });
 
-    } catch (error) {
-        console.error(error);
 
-        res.status(500).json({
-            message: error.message
+      if (existingPayment) {
+
+        return res.status(400).json({
+          success: false,
+          message:
+            "This booking has already been paid"
         });
-    }
-});
+      }
 
 
-// Get all bookings
-app.get("/bookings", async (req, res) => {
-    try {
-        const collection = db.collection("bookings");
+      /*
+      ------------------------------------------
+      CREATE REFERENCE
+      ------------------------------------------
+      */
 
-        const bookings = await collection.find().toArray();
-
-        res.status(200).json(bookings);
-
-    } catch (error) {
-        console.error(error);
-
-        res.status(500).json({
-            message: error.message
-        });
-    }
-});
+      const reference =
+        generateReference();
 
 
-// Cancel a booking
-app.put("/api/bookings/:id/cancel", async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { ObjectId } = require("mongodb");
-        const collection = db.collection("bookings");
-        const result = await collection.updateOne(
-            { _id: new ObjectId(id) },
-            {
-                $set: {
-                    status: "cancelled",
-                    cancelledAt: new Date()
-                }
-            }
+      /*
+      ------------------------------------------
+      PAYSTACK INITIALIZE
+      ------------------------------------------
+      */
+
+      const paystackResponse =
+        await fetch(
+          "https://api.paystack.co/transaction/initialize",
+          {
+            method: "POST",
+
+            headers: {
+
+              Authorization:
+                `Bearer ${PAYSTACK_SECRET_KEY}`,
+
+              "Content-Type":
+                "application/json"
+            },
+
+            body: JSON.stringify({
+
+              email,
+
+              amount:
+                String(paystackAmount),
+
+              reference,
+
+              currency:
+                "ZAR",
+
+              callback_url:
+                `${FRONTEND_URL}/payment/callback`,
+
+              metadata: {
+
+                bookingId:
+                  booking._id.toString(),
+
+                customerId:
+                  String(
+                    booking.customer_id
+                  ),
+
+                eventId:
+                  String(
+                    booking.event_id
+                  ),
+
+                venueId:
+                  String(
+                    booking.venue_id
+                  ),
+
+                bookingReference:
+                  booking.bookingReference
+              }
+            })
+          }
         );
 
-        if (result.matchedCount === 0) {
-            return res.status(404).json({
-                message: "Booking not found"
-            });
-        }
 
-        res.status(200).json({
-            message: "Booking cancelled successfully"
+      const data =
+        await paystackResponse.json();
+
+
+      console.log(
+        "PAYSTACK INITIALIZE RESPONSE:",
+        JSON.stringify(
+          data,
+          null,
+          2
+        )
+      );
+
+
+      /*
+      ------------------------------------------
+      PAYSTACK FAILED
+      ------------------------------------------
+      */
+
+      if (
+        !paystackResponse.ok ||
+        !data.status ||
+        !data.data
+      ) {
+
+        return res.status(400).json({
+
+          success: false,
+
+          message:
+            data.message ||
+            "Paystack initialization failed",
+
+          paystackResponse:
+            data
         });
-
-    } catch (error) {
-        console.error(error);
-
-        res.status(500).json({
-            message: error.message
-        });
-    }
-});
+      }
 
 
+      /*
+      ------------------------------------------
+      SAVE PAYMENT
+      ------------------------------------------
+      */
+
+      await payments.insertOne({
+
+        bookingId:
+          booking._id,
+
+        customerId:
+          String(
+            booking.customer_id
+          ),
+
+        email,
+
+        eventId:
+          booking.event_id,
+
+        venueId:
+          booking.venue_id,
+
+        amount,
+
+        paystackAmount,
+
+        currency:
+          "ZAR",
+
+        reference:
+          data.data.reference,
+
+        status:
+          "pending",
+
+        gateway:
+          "paystack",
+
+        createdAt:
+          new Date(),
+
+        updatedAt:
+          new Date()
+      });
 
 
-app.post('/api/book-seat', async (req, res) => {
-    const { eventId, seatId, userId } = req.body;
+      /*
+      ------------------------------------------
+      RETURN CHECKOUT
+      ------------------------------------------
+      */
 
-    //  Look up if this seat has already been saved in Firebase
-    const seatRef = db.collection('events').doc(eventId).collection('bookings').doc(seatId);
-    const seatSnapshot = await seatRef.get();
+      return res.json({
 
-
-    if (seatSnapshot.exists) {
-        const seatData = seatSnapshot.data();
-
-        if (seatData.status === 'booked') {
-            // If Customer B hits this, we stop them immediately and send an error message
-            return res.status(409).json({
-                success: false,
-                message: "Too late! This seat is already booked by someone else."
-            });
-        }
-    }
-
-    //  If it's not booked, save it for this user!
-    await seatRef.set({
-        status: 'booked',
-        bookedBy: userId,
-        bookedAt: new Date()
-    });
-
-    return res.status(200).json({
         success: true,
-        message: "Seat successfully booked!"
-    });
-});
+
+        authorization_url:
+          data.data.authorization_url,
+
+        access_code:
+          data.data.access_code,
+
+        reference:
+          data.data.reference
+      });
 
 
-
-// endpoint to post payments
-app.post("/payments", async (req, res) => {
-    try {
-        const payment = req.body;
-        const collection = db.collection("payments");
-        const result = await collection.insertOne({ ...payment, createdAt: new Date() });
-        res.status(201).json({
-            message: "Payment created successfully",
-            paymentId: result.insertedId
-        });
     } catch (error) {
-        console.error(error);
-        res.status(400).json({
-            message: error.message
-        });
+
+      console.error(
+        "INITIALIZE ERROR:",
+        error
+      );
+
+      return res.status(500).json({
+
+        success: false,
+
+        message:
+          "Payment initialization failed",
+
+        error:
+          error.message
+      });
     }
-});
+  }
+);
 
-app.listen(PORT, async () => {
-    await connectToDatabase();
-    console.log(`Server is running on port ${PORT}`);
-});
 
+/*
+==================================================
+2. VERIFY PAYMENT
+==================================================
+*/
+
+app.get(
+  "/api/payments/verify/:reference",
+  async (req, res) => {
+
+    try {
+
+      const {
+        reference
+      } = req.params;
+
+
+      /*
+      ------------------------------------------
+      FIND PAYMENT
+      ------------------------------------------
+      */
+
+      const payment =
+        await payments.findOne({
+          reference
+        });
+
+
+      if (!payment) {
+
+        return res.status(404).json({
+
+          success: false,
+
+          message:
+            "Payment record not found"
+        });
+      }
+
+
+      /*
+      ------------------------------------------
+      ALREADY PAID
+      ------------------------------------------
+      */
+
+      if (
+        payment.status ===
+        "success"
+      ) {
+
+        const booking =
+          await bookings.findOne({
+            _id:
+              payment.bookingId
+          });
+
+
+        return res.json({
+
+          success: true,
+
+          alreadyVerified:
+            true,
+
+          booking,
+
+          payment
+        });
+      }
+
+
+      /*
+      ------------------------------------------
+      ASK PAYSTACK
+      ------------------------------------------
+      */
+
+      const paystackResponse =
+        await fetch(
+          `https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`,
+          {
+            method: "GET",
+
+            headers: {
+
+              Authorization:
+                `Bearer ${PAYSTACK_SECRET_KEY}`
+            }
+          }
+        );
+
+
+      const data =
+        await paystackResponse.json();
+
+
+      console.log(
+        "PAYSTACK VERIFY RESPONSE:",
+        JSON.stringify(
+          data,
+          null,
+          2
+        )
+      );
+
+
+      /*
+      ------------------------------------------
+      PAYSTACK ERROR
+      ------------------------------------------
+      */
+
+      if (
+        !paystackResponse.ok ||
+        !data.status ||
+        !data.data
+      ) {
+
+        return res.status(400).json({
+
+          success: false,
+
+          message:
+            data.message ||
+            "Payment verification failed"
+        });
+      }
+
+
+      const transaction =
+        data.data;
+
+
+      /*
+      ------------------------------------------
+      CHECK REFERENCE
+      ------------------------------------------
+      */
+
+      if (
+        transaction.reference !==
+        payment.reference
+      ) {
+
+        return res.status(400).json({
+
+          success: false,
+
+          message:
+            "Payment reference mismatch"
+        });
+      }
+
+
+      /*
+      ------------------------------------------
+      CHECK PAYMENT STATUS
+      ------------------------------------------
+      */
+
+      if (
+        transaction.status !==
+        "success"
+      ) {
+
+        await payments.updateOne(
+
+          {
+            _id:
+              payment._id
+          },
+
+          {
+            $set: {
+
+              status:
+                "failed",
+
+              gatewayResponse:
+                transaction,
+
+              updatedAt:
+                new Date()
+            }
+          }
+        );
+
+
+        return res.json({
+
+          success: false,
+
+          status:
+            transaction.status,
+
+          message:
+            "Payment was not successful"
+        });
+      }
+
+
+      /*
+      ------------------------------------------
+      CHECK AMOUNT
+      ------------------------------------------
+      */
+
+      const expectedAmount =
+        Math.round(
+          Number(payment.amount) * 100
+        );
+
+      const paidAmount =
+        Number(transaction.amount);
+
+
+      console.log(
+        "EXPECTED:",
+        expectedAmount
+      );
+
+      console.log(
+        "PAID:",
+        paidAmount
+      );
+
+
+      if (
+        paidAmount !==
+        expectedAmount
+      ) {
+
+        await payments.updateOne(
+
+          {
+            _id:
+              payment._id
+          },
+
+          {
+            $set: {
+
+              status:
+                "amount_mismatch",
+
+              gatewayResponse:
+                transaction,
+
+              updatedAt:
+                new Date()
+            }
+          }
+        );
+
+
+        return res.status(400).json({
+
+          success: false,
+
+          message:
+            "Payment amount does not match booking amount",
+
+          expectedAmount,
+
+          paidAmount
+        });
+      }
+
+
+      /*
+      ------------------------------------------
+      FIND BOOKING
+      ------------------------------------------
+      */
+
+      const booking =
+        await bookings.findOne({
+
+          _id:
+            payment.bookingId
+        });
+
+
+      if (!booking) {
+
+        return res.status(404).json({
+
+          success: false,
+
+          message:
+            "Booking not found"
+        });
+      }
+
+
+      /*
+      ------------------------------------------
+      MARK PAYMENT SUCCESS
+      ------------------------------------------
+      */
+
+      await payments.updateOne(
+
+        {
+          _id:
+            payment._id
+        },
+
+        {
+          $set: {
+
+            status:
+              "success",
+
+            paidAt:
+              new Date(),
+
+            gatewayResponse:
+              transaction,
+
+            updatedAt:
+              new Date()
+          }
+        }
+      );
+
+
+      /*
+      ------------------------------------------
+      CONFIRM BOOKING
+      ------------------------------------------
+      */
+
+      await bookings.updateOne(
+
+        {
+          _id:
+            booking._id,
+
+          bookingStatus:
+            {
+              $ne:
+                "confirmed"
+            }
+        },
+
+        {
+          $set: {
+
+            bookingStatus:
+              "confirmed",
+
+            paymentStatus:
+              "paid",
+
+            paidAt:
+              new Date(),
+
+            updatedAt:
+              new Date()
+          }
+        }
+      );
+
+
+      /*
+      ------------------------------------------
+      RETURN SUCCESS
+      ------------------------------------------
+      */
+
+      const updatedBooking =
+        await bookings.findOne({
+
+          _id:
+            booking._id
+        });
+
+
+      return res.json({
+
+        success: true,
+
+        message:
+          "Payment successful and booking confirmed",
+
+        reference,
+
+        booking:
+          updatedBooking
+      });
+
+
+    } catch (error) {
+
+      console.error(
+        "VERIFY ERROR:",
+        error
+      );
+
+      return res.status(500).json({
+
+        success: false,
+
+        message:
+          "Payment verification failed",
+
+        error:
+          error.message
+      });
+    }
+  }
+);
+
+
+/*
+==================================================
+3. GET PAYMENT BY BOOKING
+==================================================
+*/
+
+app.get(
+  "/api/payments/booking/:bookingId",
+  async (req, res) => {
+
+    try {
+
+      const bookingId =
+        new ObjectId(
+          req.params.bookingId
+        );
+
+
+      const payment =
+        await payments.findOne({
+
+          bookingId
+
+        }, {
+
+          sort: {
+            createdAt:
+              -1
+          }
+
+        });
+
+
+      return res.json({
+
+        success: true,
+
+        payment
+      });
+
+
+    } catch (error) {
+
+      return res.status(500).json({
+
+        success: false,
+
+        message:
+          "Unable to retrieve payment"
+      });
+    }
+  }
+);
+
+
+/*
+==================================================
+4. PAYSTACK WEBHOOK
+==================================================
+*/
+
+app.post(
+  "/api/payments/webhook",
+  express.raw({
+    type: "application/json"
+  }),
+  async (req, res) => {
+
+    try {
+
+      /*
+      ------------------------------------------
+      VERIFY SIGNATURE
+      ------------------------------------------
+      */
+
+      const signature =
+        req.headers[
+          "x-paystack-signature"
+        ];
+
+
+      const hash =
+        crypto
+          .createHmac(
+            "sha512",
+            PAYSTACK_SECRET_KEY
+          )
+          .update(req.body)
+          .digest("hex");
+
+
+      if (
+        hash !==
+        signature
+      ) {
+
+        return res
+          .status(401)
+          .send(
+            "Invalid signature"
+          );
+      }
+
+
+      const event =
+        JSON.parse(
+          req.body.toString()
+        );
+
+
+      console.log(
+        "PAYSTACK WEBHOOK:",
+        event.event
+      );
+
+
+      /*
+      ------------------------------------------
+      PAYMENT SUCCESS
+      ------------------------------------------
+      */
+
+      if (
+        event.event ===
+        "charge.success"
+      ) {
+
+        const transaction =
+          event.data;
+
+
+        const reference =
+          transaction.reference;
+
+
+        const payment =
+          await payments.findOne({
+
+            reference
+          });
+
+
+        if (!payment) {
+
+          return res.sendStatus(
+            200
+          );
+        }
+
+
+        /*
+        Already processed
+        */
+
+        if (
+          payment.status ===
+          "success"
+        ) {
+
+          return res.sendStatus(
+            200
+          );
+        }
+
+
+        /*
+        ----------------------------------------
+        CHECK AMOUNT
+        ----------------------------------------
+        */
+
+        const expectedAmount =
+          Math.round(
+            Number(payment.amount) *
+            100
+          );
+
+
+        if (
+          Number(transaction.amount) !==
+          expectedAmount
+        ) {
+
+          await payments.updateOne(
+
+            {
+              _id:
+                payment._id
+            },
+
+            {
+              $set: {
+
+                status:
+                  "amount_mismatch",
+
+                gatewayResponse:
+                  transaction,
+
+                updatedAt:
+                  new Date()
+              }
+            }
+          );
+
+
+          return res.sendStatus(
+            200
+          );
+        }
+
+
+        /*
+        ----------------------------------------
+        MARK PAYMENT SUCCESS
+        ----------------------------------------
+        */
+
+        await payments.updateOne(
+
+          {
+            _id:
+              payment._id
+          },
+
+          {
+            $set: {
+
+              status:
+                "success",
+
+              paidAt:
+                new Date(),
+
+              gatewayResponse:
+                transaction,
+
+              updatedAt:
+                new Date()
+            }
+          }
+        );
+
+
+        /*
+        ----------------------------------------
+        CONFIRM BOOKING
+        ----------------------------------------
+        */
+
+        await bookings.updateOne(
+
+          {
+            _id:
+              payment.bookingId
+          },
+
+          {
+            $set: {
+
+              bookingStatus:
+                "confirmed",
+
+              paymentStatus:
+                "paid",
+
+              paidAt:
+                new Date(),
+
+              updatedAt:
+                new Date()
+            }
+          }
+        );
+      }
+
+
+      return res.sendStatus(
+        200
+      );
+
+
+    } catch (error) {
+
+      console.error(
+        "WEBHOOK ERROR:",
+        error
+      );
+
+      return res.sendStatus(
+        500
+      );
+    }
+  }
+);
+
+app.get(
+  "/",
+  (req, res) => {
+
+    res.json({
+
+      message:
+        "VenueFlow Paystack server is running"
+    });
+  }
+);
+
+
+connectDatabase()
+  .then(() => {
+
+    app.listen(
+      PORT,
+      () => {
+
+        console.log(
+          `Server running on http://localhost:${PORT}`
+        );
+
+      }
+    );
+
+  })
+  .catch(error => {
+
+    console.error(
+      "MongoDB connection failed:",
+      error
+    );
+
+    process.exit(1);
+  });
