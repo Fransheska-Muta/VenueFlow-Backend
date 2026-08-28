@@ -3,7 +3,7 @@ const cors = require("cors");
 const express = require("express");
 const axios = require("axios");
 const app = express();
-app.use(cors());
+app.use(cors())
 
 const PORT = process.env.PORT || 3000;
 app.use(express.json());
@@ -724,6 +724,15 @@ app.post("/payments", async (req, res) => {
   }
 });
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Server running on port ${PORT}`)
-});
+async function startServer() {
+  try {
+    await connectToDatabase()
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on port ${PORT}`);
+      console.log("Connected to MongoDB");
+    })
+  } catch (error) {
+    console.error("Failed to connect to MongoDB:", error);
+  }
+}
+startServer()
