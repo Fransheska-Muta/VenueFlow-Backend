@@ -325,7 +325,7 @@ app.get("/venues", verifyFirebase, async (req, res) => {
 
 // endpoint to post venues
 app.post("/venues", verifyFirebase, async (req, res) => {
-  console.log("VENUES ENDPOINT WAS HIT");
+  // console.log("VENUES ENDPOINT WAS HIT");
   try {
     const venue = req.body;
     const collection = db.collection("venues");
@@ -724,7 +724,6 @@ app.post("/payments", async (req, res) => {
   }
 });
 
-app.listen(PORT, async () => {
-  await connectToDatabase();
-  console.log(`Server is running on port ${PORT}`);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Server running on port ${PORT}`)
 });
