@@ -5,7 +5,7 @@ const axios = require("axios");
 const app = express();
 const fs = require("fs");
 const path = require("path");
-app.use(cors());
+app.use(cors({origin: process.env.FRONTEND_URL}))
 
 const PORT = process.env.PORT || 3000;
 app.use(express.json());
