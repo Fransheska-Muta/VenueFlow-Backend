@@ -968,7 +968,15 @@ app.get("/api/paystack/verify/:reference", async (req, res) => {
   }
 });
 
-app.listen(PORT, async () => {
-  await connectToDatabase();
-  console.log(`Server is running on port ${PORT}`);
-});
+async function startServer() {
+  try {
+    await connectToDatabase()
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on port ${PORT}`);
+      console.log("Connected to MongoDB");
+    })
+  } catch (error) {
+    console.error("Failed to connect to MongoDB:", error);
+  }
+}
+startServer()
