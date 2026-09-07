@@ -659,19 +659,69 @@ app.post("/bookings", verifyFirebase, async (req, res) => {
   }
 });
 
-// endpoint to get bookings history
+// // endpoint to get bookings history
+// app.get("/bookings", verifyFirebase, async (req, res) => {
+//   try {
+//     const collection = db.collection("bookings");
+//     const bookings = await collection.find({}).toArray();
+//     res.json(bookings);
+//   } catch (error) {
+//     console.error(error);
+//     res.status(400).json({
+//       message: error.message,
+//     });
+//   }
+// });
+
+
+// History endpoint (Davids implementation)
+
 app.get("/bookings", verifyFirebase, async (req, res) => {
-  try {
-    const collection = db.collection("bookings");
-    const bookings = await collection.find({}).toArray();
-    res.json(bookings);
-  } catch (error) {
-    console.error(error);
-    res.status(400).json({
-      message: error.message,
-    });
-  }
-});
+    try {
+        const userId = req.uid;
+
+        const bookingCollection = db.collection("bookings");
+        const eventCollection = db.collection("events");
+        const venueCollection = db.collection("venues");
+        
+        const standardBookings = await bookingCollection
+            .find({ customer_id: userId })
+            .sort({ createdAt: -1 })
+            .toArray();
+
+        const properlyFormattedHistory = [];
+
+        for (const booking of standardBookings) {
+            
+            const matchingEvent = await eventCollection.findOne({ _id: booking.event_id });
+            
+            const matchingVenue = await venueCollection.findOne({ _id: booking.venue_id });
+
+            const cleanHistoryRecord = {
+                bookingReference: booking.bookingReference,
+                event: matchingEvent ? matchingEvent.name : "Unknown Event", 
+                venue: matchingVenue ? matchingVenue.name : "Unknown Venue",
+                date: booking.createdAt,
+                selectedSeats: booking.selectedSeats,
+                totalAmount: booking.totalPrice,
+                bookingStatus: booking.bookingStatus
+            };
+
+            properlyFormattedHistory.push(cleanHistoryRecord);
+        }
+
+        return res.json(properlyFormattedHistory);
+
+    } catch (error) {
+        console.error(error);
+        return res.status(400).json({
+            message: error.message
+        });
+    }
+});      
+
+
+
 
 // ---------------------------------------------------------------------
 // PAYSTACK
