@@ -575,7 +575,6 @@ app.get("/events/:eventId/seats", async (req, res) => {
 
 
 
-// endpoint to post bookings (David's implementation)
 app.post("/bookings", async (req, res) => {
   try {
     const { eventId, venueId, selectedSeats } = req.body;
@@ -726,4 +725,5 @@ app.post("/payments", async (req, res) => {
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on port ${PORT}`)
+  connectToDatabase()
 });
